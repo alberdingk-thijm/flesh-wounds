@@ -6,7 +6,7 @@ use std::str::FromStr;
 use std::num::ParseIntError;
 
 /// Struct for tracking the total of .0 out of .1
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Copy, Clone, PartialEq)]
 pub struct Meter<T: Copy + Clone>(T, T);
 
 impl<T: Copy + Clone> Meter<T> {

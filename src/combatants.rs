@@ -3,20 +3,21 @@
 use meters::Meter;
 use std::fmt;
 
-/// A participant in the battle.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Combatant {
-    pub name: String,
-    pub team: u32,
-    pub init: u32,
-    pub hp: Meter<i32>,
-    pub status: Status,
-    pub attacks: Meter<u32>,
-    pub hd: u32,
-    pub class: Classes,
+    name: String,
+    #[serde(rename = "level/hd")]
+    level_hd: u32,
+    class: Classes,
+    abilities: Option<Abilities>,
+    hp: Meter<i32>,
+    attacks: Meter<u32>,
+    ac: i32,
+    status: Status,
+    team: u32,
+    init: u32,
     dealt: i32,
     recvd: i32,
-    xp_bonus: bool,
     round: u32,
 }
 
@@ -43,20 +44,37 @@ pub enum Class {
     Monster,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Abilities {
+    #[serde(rename = "str")]
+    strength: u32,
+    #[serde(rename = "int")]
+    intelligence: u32,
+    #[serde(rename = "wis")]
+    wisdom: u32,
+    #[serde(rename = "dex")]
+    dexterity: u32,
+    #[serde(rename = "con")]
+    constituion: u32,
+    #[serde(rename = "cha")]
+    charisma: u32,
+}
+
 impl Default for Combatant {
     fn default() -> Self {
         Combatant {
             name: "?".repeat(16),
             team: 0,
             init: 0,
-            hp: "0/0".parse::<Meter<i32>>().unwrap(),
+            hp: "1/1".parse::<Meter<i32>>().unwrap(),
+            abilities: None,
+            ac: 10,
             status: Status::Healthy,
-            attacks: "0/0".parse::<Meter<u32>>().unwrap(),
-            hd: 0,
+            attacks: "1/1".parse::<Meter<u32>>().unwrap(),
+            level_hd: 1,
             class: Classes::Single(Class::Monster),
             dealt: 0,
             recvd: 0,
-            xp_bonus: false,
             round: 0,
         }
     }
@@ -83,19 +101,20 @@ impl Combatant {
     /// Modifier specifying total possible range of base init values.
     const INIT_MOD : u32 = 12;
 
-    pub fn new<S: Into<String>>(name: S, team: u32, init: u32, hp: Meter<i32>, attacks: Meter<u32>, hd: u32, classes: Classes, xp: bool) -> Self {
+    pub fn new<S: Into<String>>(name: S, team: u32, init: u32, hp: Meter<i32>, attacks: Meter<u32>, hd: u32, classes: Classes) -> Self {
         Combatant {
             name: name.into(),
             team: team,
             init: init,
             hp: hp,
             status: Status::Healthy,
+            abilities: None,
+            ac: 10,
             attacks: attacks,
-            hd: hd,
+            level_hd: hd,
             class: classes,
             dealt: 0,
             recvd: 0,
-            xp_bonus: xp,
             round: 1,
         }
     }
@@ -169,17 +188,24 @@ impl Combatant {
 
     /// Calculate xp earned.
     pub fn xp(&self, team_bonus: i32) -> i32 {
+        // FIXME: change false to xp bonus calc
         ((self.dealt * 10 + self.recvd * 20 + team_bonus) as f64 
-            * if self.xp_bonus { 1.1 } else { 1.0 }) as i32
+            * if false { 1.1 } else { 1.0 }) as i32
     }
 }
 
 /// The status of the participant.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Status {
     Healthy,
     Stunned(u32),
     Dead,
+}
+
+impl Default for Status {
+    fn default() -> Self {
+        Status::Healthy
+    }
 }
 
 impl Status {

@@ -4,13 +4,17 @@ extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
+extern crate failure;
 
 use termion::{clear, cursor, color, style};
 use termion::raw::IntoRawMode;
 use termion::input::{Keys, TermRead};
 use termion::event::Key;
+use failure::Error;
 
-use std::io::{self, Read, Write};
+use std::io::{self, BufReader, BufWriter, Read, Write};
+use std::fs::File;
+use std::path::Path;
 
 mod meters;
 mod loader;
@@ -63,6 +67,22 @@ impl<R: Read, W: Write> Battle<R, W> {
             width: format!("{}", Combatant::default()).len() as u16,
             height: MAX_COMBATANTS as u16,
         }
+    }
+
+    /// Load combatants from a file.
+    fn load_combatants<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Error> {
+        let f = File::open(path)?;
+        let reader = BufReader::new(f);
+        let combatants : Vec<Combatant> = serde_json::from_reader(reader)?;
+        self.combatants = combatants;
+        Ok(())
+    }
+
+    fn save_combatants<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
+        let f = File::create(path)?;
+        let writer = BufWriter::new(f);
+        let () = serde_json::to_writer_pretty(writer, &self.combatants)?;
+        Ok(())
     }
 
     fn draw(&mut self) {
@@ -152,6 +172,14 @@ impl<R: Read, W: Write> Battle<R, W> {
             let b = self.stdin.next().unwrap().unwrap();
             use termion::event::Key::*;
             match b {
+                Ctrl('s') => {
+                    let p = self.read_line();
+                    self.save_combatants(p).unwrap();
+                },
+                Ctrl('o') => {
+                    let p = self.read_line();
+                    self.load_combatants(p).unwrap();
+                }
                 Char('\n') => {
                     self.state = State::Target{ from: self.pos, to: self.pos };
                 },
@@ -265,9 +293,7 @@ impl<R: Read, W: Write> Battle<R, W> {
         }.unwrap();
         let hp = self.read_line().parse::<Meter<i32>>().unwrap();
         let atts = self.read_line().parse::<Meter<u32>>().unwrap();
-        // lvld: y/n
-        // xp: y/n
-        let c = Combatant::new(name, team, init, hp, atts, 1, Classes::Single(Class::Monster), false);
+        let c = Combatant::new(name, team, init, hp, atts, 1, Classes::Single(Class::Monster));
         self.combatants.push(c);
         self.sort();
     }
