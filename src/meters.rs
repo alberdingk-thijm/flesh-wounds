@@ -30,6 +30,13 @@ impl<T : Copy + Clone + FromStr<Err = ParseIntError>> FromStr for Meter<T> {
     }
 }
 
+impl<T: Copy + Clone + Ord + Add<Output = T>> Add<T> for Meter<T> {
+    type Output = Meter<T>;
+    fn add(self, rhs: T) -> Self::Output {
+        Meter(self.1.min(self.0 + rhs), self.1)
+    }
+}
+
 impl<T: Copy + Clone + Ord + Add<Output = T>> AddAssign<T> for Meter<T> {
     fn add_assign(&mut self, rhs: T) {
         self.0 = self.1.min(self.0 + rhs);
@@ -46,13 +53,6 @@ impl<T: Copy + Clone + Ord + Sub<Output = T>> Sub<T> for Meter<T> {
 impl<T: Copy + Clone + Ord + SubAssign> SubAssign<T> for Meter<T> {
     fn sub_assign(&mut self, rhs: T) {
         self.0 -= rhs;
-    }
-}
-
-impl<T: Copy + Clone + Ord + Add<Output = T>> Add<T> for Meter<T> {
-    type Output = Meter<T>;
-    fn add(self, rhs: T) -> Self::Output {
-        Meter(self.1.min(self.0 + rhs), self.1)
     }
 }
 

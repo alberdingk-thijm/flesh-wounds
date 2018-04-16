@@ -5,3 +5,6 @@ authors = ["Tim Alberdingk Thijm <tim.thijm@gmail.com>"]
 
 [dependencies]
 termion = "1.5"
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"

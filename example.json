@@ -1,0 +1,39 @@
+[
+  {
+    "name": "Zahaedra",
+    "level/hd": 1,
+    "class": [ "Ranger", "Illusionist" ],
+    "abilities": {
+      "str": 15,
+      "int": 16,
+      "wis": 15,
+      "dex": 16,
+      "con": 14,
+      "cha": 9
+    },
+    "hp": 13,
+    "ac": 8
+  },
+  {
+    "name": "Rosanna",
+    "level/hd": 1,
+    "class": "Mage",
+    "abilities": {
+      "str": 13,
+      "int": 18,
+      "wis": 12,
+      "dex": 11,
+      "con": 10,
+      "cha": 12
+    },
+    "hp": 5,
+    "ac": 8
+  },
+  {
+    "name": "Rat",
+    "level/hd": 1,
+    "class": "Monster",
+    "hp": 3,
+    "ac": 6
+  }
+]

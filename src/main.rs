@@ -1,18 +1,23 @@
 #![allow(dead_code)]
 extern crate termion;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde_json;
 
-use termion::{clear, cursor, style};
+use termion::{clear, cursor, color, style};
 use termion::raw::IntoRawMode;
 use termion::input::{Keys, TermRead};
 use termion::event::Key;
 
 use std::io::{self, Read, Write};
-use std::fmt;
 
 mod meters;
+mod loader;
+mod combatants;
 
-//use meters::{Incrementer, Meter};
 use meters::Meter;
+use combatants::{Combatant, Classes, Class};
 
 // Box drawing characters
 const TOP_RIGHT : &'static str = "┐";
@@ -28,7 +33,6 @@ const TOP_TEE : &'static str = "┬";
 const VERT : &'static str = "│";
 
 const MAX_COMBATANTS : usize = 32;
-const WIDTH : u16 = 57;
 
 enum State {
     Input,
@@ -56,7 +60,7 @@ impl<R: Read, W: Write> Battle<R, W> {
             combatants: Vec::with_capacity(MAX_COMBATANTS),
             round: 1,
             pos: 0,
-            width: WIDTH,
+            width: format!("{}", Combatant::default()).len() as u16,
             height: MAX_COMBATANTS as u16,
         }
     }
@@ -65,6 +69,8 @@ impl<R: Read, W: Write> Battle<R, W> {
         // clear the screen
         write!(self.stdout, "{}", clear::All).unwrap();
         // write the top frame
+        self.draw_border(true);
+            /*
         self.stdout.write(TOP_LEFT.as_bytes()).unwrap();
         self.stdout.write(HORZ.as_bytes()).unwrap();
         let round = format!("R: {:02}", self.round);
@@ -73,44 +79,70 @@ impl<R: Read, W: Write> Battle<R, W> {
             self.stdout.write(HORZ.as_bytes()).unwrap();
         }
         self.stdout.write(TOP_RIGHT.as_bytes()).unwrap();
+        */
         self.stdout.write(b"\n\r").unwrap();
         // write combatant name and display combatant info
         for i in 0..self.height {
             self.draw_combatant_row(i as usize);
         }
         // write the bottom frame
-        self.stdout.write(BOTTOM_LEFT.as_bytes()).unwrap();
-        for _ in 0..self.width {
-            self.stdout.write(HORZ.as_bytes()).unwrap();
-        }
-        self.stdout.write(BOTTOM_RIGHT.as_bytes()).unwrap();
+        self.draw_border(false);
+        // draw prompt box
+        self.draw_prompt_box();
 
         write!(self.stdout, "{}", cursor::Goto(1, 1)).unwrap();
         self.stdout.flush().unwrap();
+    }
+
+    fn draw_border(&mut self, top: bool) {
+        let v = VERT.chars().next().unwrap();
+        let mut def = format!("{}", Combatant::default())
+            .replace(|c| c != v, HORZ);
+        if top {
+            self.stdout.write(TOP_LEFT.as_bytes()).unwrap();
+            self.stdout.write(HORZ.as_bytes()).unwrap();
+            def = def.replace(v, TOP_TEE);
+            def = format!("R: {:02}{}", self.round, def.chars().skip(5).collect::<String>());
+            self.stdout.write(def.as_bytes()).unwrap();
+            self.stdout.write(HORZ.as_bytes()).unwrap();
+            self.stdout.write(TOP_RIGHT.as_bytes()).unwrap();
+        } else {
+            self.stdout.write(BOTTOM_LEFT.as_bytes()).unwrap();
+            self.stdout.write(HORZ.as_bytes()).unwrap();
+            def = def.replace(v, BOTTOM_TEE);
+            self.stdout.write(def.as_bytes()).unwrap();
+            self.stdout.write(HORZ.as_bytes()).unwrap();
+            self.stdout.write(BOTTOM_RIGHT.as_bytes()).unwrap();
+        }
     }
 
     fn draw_combatant_row(&mut self, i: usize) {
         self.stdout.write(VERT.as_bytes()).unwrap();
         if i < self.combatants.len() {
             let ref c = self.combatants[i];
-            self.stdout.write(b" ").unwrap();
             let ctext = format!("{}", c);
             match self.state {
                 State::Target { from: f, .. } if f == i => {
-                    write!(self.stdout, "{}{}{}", style::Bold, ctext, style::Reset)
+                    write!(self.stdout, " {}{}{} ", style::Bold, ctext, style::Reset)
                 },
                 _ if self.pos == i => {
-                    write!(self.stdout, "{}{}{}", style::Invert, ctext, style::Reset)
+                    write!(self.stdout, " {}{}{} ", style::Invert, ctext, style::Reset)
                 },
-                _ => write!(self.stdout, "{}", c),
+                _ => write!(self.stdout, " {} ", c),
             }.unwrap();
-            self.stdout.write(b" ").unwrap();//.repeat(self.width as usize - 14 - ctext.len()).as_bytes()).unwrap();
+            //self.stdout.write(b" ").unwrap();//.repeat(self.width as usize - 14 - ctext.len()).as_bytes()).unwrap();
         } else {
-            self.stdout.write_all(b" +").unwrap();
-            self.stdout.write_all(" ".repeat(self.width as usize - 2).as_bytes()).unwrap();
+            let c = Combatant::default();
+            write!(self.stdout, " {} ", format!("{}", c).replace(|c : char| c != '│', " ")).unwrap();
+            //self.stdout.write_all(b" +").unwrap();
+            //self.stdout.write_all(" ".repeat(format!("{}", c).len() - 10).as_bytes()).unwrap();
         }
         self.stdout.write(VERT.as_bytes()).unwrap();
         self.stdout.write(b"\n\r").unwrap();
+    }
+
+    fn draw_prompt_box(&mut self) {
+        //TODO
     }
 
     /// Start the battle.
@@ -141,12 +173,12 @@ impl<R: Read, W: Write> Battle<R, W> {
                 },
                 Char('x') => {
                     self.advance();
-                }
+                },
                 _ => {},
             }
 
             self.draw();
-            //write!(self.stdout, "{}", cursor::Goto(1, 1)).unwrap();
+            write!(self.stdout, "{}", cursor::Goto(1, 1)).unwrap();
             self.stdout.flush().unwrap();
         }
     }
@@ -235,7 +267,7 @@ impl<R: Read, W: Write> Battle<R, W> {
         let atts = self.read_line().parse::<Meter<u32>>().unwrap();
         // lvld: y/n
         // xp: y/n
-        let c = Combatant::new(name, team, init, hp, atts, false, false);
+        let c = Combatant::new(name, team, init, hp, atts, 1, Classes::Single(Class::Monster), false);
         self.combatants.push(c);
         self.sort();
     }
@@ -247,7 +279,7 @@ impl<R: Read, W: Write> Battle<R, W> {
 
     fn attack(&mut self, dam: i32) {
         if let State::Target { from: f, to: t } = self.state {
-            if self.combatants[f].attacks.curr() >= 1 {
+            if self.combatants[f].can_attack() {
                 self.combatants[f].deal_hit(dam);
                 self.combatants[t].recv_hit(dam);
             }
@@ -276,169 +308,6 @@ impl<R: Read, W: Write> Battle<R, W> {
                 *t = self.pos;
             }
         }
-    }
-}
-
-/// The status of the participant.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Status {
-    Healthy,
-    Stunned(u32),
-    Dead,
-}
-
-impl Status {
-    /// Calculate stun lock effect based on damage versus hp.
-    fn stun_lock(dam: i32, hp: i32) -> Self {
-        if dam * 7 >= hp * 6 {
-            Status::Stunned(8)
-        } else if dam * 6 >= hp * 5 {
-            Status::Stunned(7)
-        } else if dam * 5 >= hp * 4 {
-            Status::Stunned(6)
-        } else if dam * 4 >= hp * 3 {
-            Status::Stunned(5)
-        } else if dam * 3 >= hp * 2 {
-            Status::Stunned(4)
-        } else if dam * 2 >= hp {
-            Status::Stunned(3)
-        } else if dam * 3 >= hp {
-            Status::Stunned(2)
-        } else if dam * 4 >= hp {
-            Status::Stunned(1)
-        } else {
-            Status::Healthy
-        }
-    }
-}
-
-impl fmt::Display for Status {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", match *self {
-            Status::Dead => "#",
-            Status::Stunned(_) => "*",
-            Status::Healthy => "+",
-        })
-    }
-}
-
-/// A participant in the battle.
-#[derive(Debug, Clone)]
-struct Combatant {
-    name: String,
-    team: u32,
-    init: u32,
-    hp: Meter<i32>,
-    status: Status,
-    attacks: Meter<u32>,
-    leveled: bool,
-    dealt: i32,
-    recvd: i32,
-    xp_bonus: bool,
-    round: u32,
-}
-
-impl Combatant {
-    const LVLD_DEAD : i32 = -10;
-    const UNLVLD_DEAD : i32 = -4;
-    /// Modifier specifying total possible range of base init values.
-    const INIT_MOD : u32 = 12;
-
-    fn new<S: Into<String>>(name: S, team: u32, init: u32, hp: Meter<i32>, attacks: Meter<u32>, leveled: bool, xp: bool) -> Self {
-        Combatant {
-            name: name.into(),
-            team: team,
-            init: init,
-            hp: hp,
-            status: Status::Healthy,
-            attacks: attacks,
-            leveled: leveled,
-            dealt: 0,
-            recvd: 0,
-            xp_bonus: xp,
-            round: 1,
-        }
-    }
-
-    fn update(&mut self) {
-        self.round += 1;
-        if let Status::Stunned(_) = self.status {
-            // revert to healthy
-            self.status = Status::Healthy;
-        }
-        // refill attacks
-        self.attacks += self.attacks.max();
-    }
-
-    /// Calculate initiative relative to base initiative and current state.
-    fn init(&self) -> u32 {
-        match self.status {
-            Status::Healthy => self.init + Combatant::INIT_MOD * 2,
-            Status::Stunned(x) => self.init + Combatant::INIT_MOD - x,
-            Status::Dead => self.init,
-        }
-    }
-
-    fn min_hp(&self) -> i32 {
-        if self.leveled {
-            Combatant::LVLD_DEAD
-        } else {
-            Combatant::UNLVLD_DEAD
-        }
-    }
-
-
-    /// Add to xp earnings for dealing a hit.
-    fn deal_hit(&mut self, dam: i32) {
-        self.dealt += dam;
-        self.attacks -= 1;
-        // TODO: missing some way of allowing for 1 extra hit every X rounds
-    }
-
-    /// Damage self.
-    fn recv_hit(&mut self, dam: i32) {
-        self.recvd += dam;
-        self.status = match self.status {
-            Status::Healthy | Status::Stunned(_) if (self.hp.curr() - dam < self.min_hp()) => Status::Dead,
-            // if the current stun is bigger, retain it
-            s @ Status::Healthy | s @ Status::Stunned(_) => {
-                let new = Status::stun_lock(dam, self.hp.curr());
-                if new > s {
-                    // decrement attacks available on a new greater stun
-                    if let Status::Stunned(x) = new {
-                        self.attacks -= x.min(self.attacks.curr());
-                    }
-                    new
-                } else {
-                    s
-                }
-            },
-            s @ _ => s,
-        };
-        self.hp -= dam;
-    }
-
-    /// Heal self.
-    fn heal(&mut self, dam: i32) {
-        self.hp += dam;
-    }
-
-    /// Calculate xp earned.
-    fn xp(&self, team_bonus: i32) -> i32 {
-        ((self.dealt * 10 + self.recvd * 20 + team_bonus) as f64 
-            * if self.xp_bonus { 1.1 } else { 1.0 }) as i32
-    }
-}
-
-impl fmt::Display for Combatant {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:16.16}\t{}\t{}\t{:>7}\t{}\t{}",
-               self.name,
-               self.team,
-               self.init,
-               self.hp,
-               self.attacks,
-               self.status)
     }
 }
 
