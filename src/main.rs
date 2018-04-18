@@ -6,7 +6,7 @@ extern crate serde_derive;
 extern crate serde_json;
 extern crate failure;
 
-use termion::{clear, cursor, color, style};
+use termion::{clear, cursor, style};
 use termion::raw::IntoRawMode;
 use termion::input::{Keys, TermRead};
 use termion::event::Key;
@@ -87,7 +87,7 @@ impl<R: Read, W: Write> Battle<R, W> {
 
     fn draw(&mut self) {
         // clear the screen
-        write!(self.stdout, "{}", clear::All).unwrap();
+        write!(self.stdout, "{}{}", clear::All, cursor::Goto(1, 2)).unwrap();
         // write the top frame
         self.draw_border(true);
             /*
@@ -162,7 +162,8 @@ impl<R: Read, W: Write> Battle<R, W> {
     }
 
     fn draw_prompt_box(&mut self) {
-        //TODO
+        write!(self.stdout, "{}> ", cursor::Goto(1, 1)).unwrap();
+        self.stdout.flush().unwrap();
     }
 
     /// Start the battle.
@@ -173,11 +174,11 @@ impl<R: Read, W: Write> Battle<R, W> {
             use termion::event::Key::*;
             match b {
                 Ctrl('s') => {
-                    let p = self.read_line();
+                    let p = self.read_line("Save to file: ");
                     self.save_combatants(p).unwrap();
                 },
                 Ctrl('o') => {
-                    let p = self.read_line();
+                    let p = self.read_line("Open file: ");
                     self.load_combatants(p).unwrap();
                 }
                 Char('\n') => {
@@ -192,15 +193,19 @@ impl<R: Read, W: Write> Battle<R, W> {
                 },
                 Char('a') => {
                     // make sure from has enough attacks
-                    let dam = self.read_line().parse::<i32>();
+                    let dam = self.read_line("Damage: ").parse::<i32>();
                     dam.map(|d| self.attack(d)).ok();
                 },
                 Char('h') => {
-                    let heal = self.read_line().parse::<i32>();
+                    let heal = self.read_line("Healing: ").parse::<i32>();
                     heal.map(|h| self.heal(h)).ok();
                 },
                 Char('x') => {
                     self.advance();
+                },
+                Ctrl('c') => {
+                    // terminate signal
+                    return
                 },
                 _ => {},
             }
@@ -239,8 +244,9 @@ impl<R: Read, W: Write> Battle<R, W> {
         self.pos = 0;
     }
 
-    fn read_char(&mut self) -> Option<char> {
-        write!(self.stdout, "{}> {}", cursor::Goto(1, self.height + 3), cursor::Show).unwrap();
+    fn read_char(&mut self, prompt: &str) -> Option<char> {
+        write!(self.stdout, "{}> {}{}", cursor::Goto(1, 1), prompt, cursor::Show).unwrap();
+        self.stdout.flush().unwrap();
         if let Some(Ok(Key::Char(c))) = self.stdin.next() {
             write!(self.stdout, "{}{}{}", c, cursor::Hide, cursor::Goto(1, 1)).unwrap();
             self.stdout.flush().unwrap();
@@ -250,9 +256,10 @@ impl<R: Read, W: Write> Battle<R, W> {
         }
     }
 
-    fn read_line(&mut self) -> String {
+    fn read_line(&mut self, prompt: &str) -> String {
         let mut s = String::from("");
-        write!(self.stdout, "{}> {}", cursor::Goto(1, self.height + 3), cursor::Show).unwrap();
+        write!(self.stdout, "{}> {}{}", cursor::Goto(1, 1), prompt, cursor::Show).unwrap();
+        self.stdout.flush().unwrap();
         while let Some(Ok(k)) = self.stdin.next() {
             match k {
                 Key::Char('\n') | Key::Char('\r') => {
@@ -263,6 +270,17 @@ impl<R: Read, W: Write> Battle<R, W> {
                     write!(self.stdout, "{}", c).unwrap();
                     self.stdout.flush().unwrap();
                     s.push(c)
+                },
+                Key::Ctrl('c') => {
+                    // FIXME: add some way to also jump out of caller's control flow
+                    break
+                },
+                Key::Backspace => { 
+                    // remove a character
+                    if let Some(_) = s.pop() {
+                        write!(self.stdout, "{}{}", cursor::Left(1), clear::UntilNewline).unwrap();
+                        self.stdout.flush().unwrap();
+                    }
                 },
                 _ => (),
             }
@@ -275,9 +293,9 @@ impl<R: Read, W: Write> Battle<R, W> {
     /// Add a combatant to the battle.
     fn add_combatant(&mut self) {
         // receive info from user
-        let name = self.read_line();
+        let name = self.read_line("Name: ");
         let team = 'team: loop {
-            let i = self.read_char().and_then(|c| c.to_digit(10));
+            let i = self.read_char("Team: ").and_then(|c| c.to_digit(10));
             match i {
                 Some(_) => break i,
                 None => (),
@@ -285,14 +303,15 @@ impl<R: Read, W: Write> Battle<R, W> {
         }.unwrap();
         write!(self.stdout, "{}", clear::CurrentLine).unwrap();
         let init = 'init: loop {
-            let i = self.read_char().and_then(|c| c.to_digit(10));
+            let i = self.read_char("Initiative: ").and_then(|c| c.to_digit(10));
             match i {
                 Some(_) => break i,
                 None => (),
             }
         }.unwrap();
-        let hp = self.read_line().parse::<Meter<i32>>().unwrap();
-        let atts = self.read_line().parse::<Meter<u32>>().unwrap();
+        write!(self.stdout, "{}", clear::CurrentLine).unwrap();
+        let hp = self.read_line("HP: ").parse::<Meter<i32>>().unwrap();
+        let atts = self.read_line("Attacks: ").parse::<Meter<u32>>().unwrap();
         let c = Combatant::new(name, team, init, hp, atts, 1, Classes::Single(Class::Monster));
         self.combatants.push(c);
         self.sort();

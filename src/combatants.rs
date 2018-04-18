@@ -44,7 +44,26 @@ pub enum Class {
     Monster,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+pub struct ClassRefs {
+    xp: Abilities,
+    multi: Abilities,
+    min: Abilities,
+    thac0: Abilities,
+    saves: Saves,
+}
+
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
+pub struct Saves {
+    poisdeath: Abilities,
+    parapet: Abilities,
+    poly: Abilities,
+    rsw: Abilities,
+    breath: Abilities,
+    magic: Abilities,
+}
+
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct Abilities {
     #[serde(rename = "str")]
     strength: u32,
