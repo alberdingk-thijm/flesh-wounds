@@ -47,7 +47,7 @@ enum State {
 struct Battle<R: Read, W: Write> {
     stdin: Keys<R>,
     stdout: W,
-    state: State,
+    sel: Option<usize>,
     combatants: Vec<Combatant>,
     round: u32,
     pos: usize,
@@ -60,7 +60,8 @@ impl<R: Read, W: Write> Battle<R, W> {
         Battle {
             stdin: stdin.keys(),
             stdout: stdout,
-            state: State::Input,
+            sel: None,
+            //state: State::Input,
             combatants: Vec::with_capacity(MAX_COMBATANTS),
             round: 1,
             pos: 0,
@@ -141,8 +142,8 @@ impl<R: Read, W: Write> Battle<R, W> {
         if i < self.combatants.len() {
             let ref c = self.combatants[i];
             let ctext = format!("{}", c);
-            match self.state {
-                State::Target { from: f, .. } if f == i => {
+            match self.sel {
+                Some(t) if t == i => {
                     write!(self.stdout, " {}{}{} ", style::Bold, ctext, style::Reset)
                 },
                 _ if self.pos == i => {
@@ -150,6 +151,15 @@ impl<R: Read, W: Write> Battle<R, W> {
                 },
                 _ => write!(self.stdout, " {} ", c),
             }.unwrap();
+            // match self.state {
+            //     State::Target { from: f, .. } if f == i => {
+            //         write!(self.stdout, " {}{}{} ", style::Bold, ctext, style::Reset)
+            //     },
+            //     _ if self.pos == i => {
+            //         write!(self.stdout, " {}{}{} ", style::Invert, ctext, style::Reset)
+            //     },
+            //     _ => write!(self.stdout, " {} ", c),
+            // }.unwrap();
             //self.stdout.write(b" ").unwrap();//.repeat(self.width as usize - 14 - ctext.len()).as_bytes()).unwrap();
         } else {
             let c = Combatant::default();
@@ -182,7 +192,11 @@ impl<R: Read, W: Write> Battle<R, W> {
                     self.load_combatants(p).unwrap();
                 }
                 Char('\n') => {
-                    self.state = State::Target{ from: self.pos, to: self.pos };
+                    self.sel = match self.sel {
+                        Some(i) if i == self.pos => None,
+                        _ => Some(self.pos),
+                    };
+                    //self.state = State::Target{ from: self.pos, to: self.pos };
                 },
                 Char('j') => self.down(),
                 Char('k') => self.up(),
@@ -314,7 +328,8 @@ impl<R: Read, W: Write> Battle<R, W> {
     }
 
     fn init_combatant(&mut self) {
-        if let State::Target { from: f, .. } = self.state {
+        if let Some(f) = self.sel {
+        //if let State::Target { from: f, .. } = self.state {
             let team = self.read_char("Team: ").and_then(|c| c.to_digit(10));
             self.combatants[f].team(team);
             write!(self.stdout, "{}", clear::CurrentLine).unwrap();
@@ -325,7 +340,8 @@ impl<R: Read, W: Write> Battle<R, W> {
 
     /// Duplicate the combatant, renaming if given a new name.
     fn copy_combatant<S: Into<String>>(&mut self, name: Option<S>) {
-        if let State::Target { from: f, .. } = self.state {
+        if let Some(f) = self.sel {
+        //if let State::Target { from: f, .. } = self.state {
             let mut c = self.combatants[f].clone();
             if let Some(name) = name {
                 c.rename(name);
@@ -334,13 +350,15 @@ impl<R: Read, W: Write> Battle<R, W> {
         }
     }
 
-    /// Target an attack from one combatant upon another.
-    fn target_combatant(&mut self, att_ix: usize, def_ix: usize) {
-        self.state = State::Target { from: att_ix, to: def_ix };
-    }
+    // Target an attack from one combatant upon another.
+    //fn target_combatant(&mut self, att_ix: usize, def_ix: usize) {
+        //self.state = State::Target { from: att_ix, to: def_ix };
+    //}
 
     fn attack(&mut self, dam: i32) {
-        if let State::Target { from: f, to: t } = self.state {
+        let t = self.pos;
+        if let Some(f) = self.sel {
+        //if let State::Target { from: f, to: t } = self.state {
             if self.combatants[f].in_combat() {
                 if self.combatants[f].can_attack() {
                     self.combatants[f].deal_hit(dam);
@@ -357,7 +375,8 @@ impl<R: Read, W: Write> Battle<R, W> {
     }
 
     fn heal(&mut self, dam: i32) {
-        if let State::Target { to: t, .. } = self.state {
+        if let Some(t) = self.sel {
+        //if let State::Target { to: t, .. } = self.state {
             self.combatants[t].heal(dam);
         }
     }
@@ -365,18 +384,18 @@ impl<R: Read, W: Write> Battle<R, W> {
     fn down(&mut self) {
         if self.pos + 1 < self.combatants.len() {
             self.pos += 1;
-            if let State::Target { to: ref mut t, .. } = self.state {
-                *t = self.pos;
-            }
+            // if let State::Target { to: ref mut t, .. } = self.state {
+            //     *t = self.pos;
+            // }
         }
     }
 
     fn up(&mut self) {
         if self.pos > 0 {
             self.pos -= 1;
-            if let State::Target { to: ref mut t, .. } = self.state {
-                *t = self.pos;
-            }
+            // if let State::Target { to: ref mut t, .. } = self.state {
+            //     *t = self.pos;
+            // }
         }
     }
 }
