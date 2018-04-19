@@ -1,10 +1,11 @@
 #![allow(dead_code)]
 extern crate termion;
 extern crate serde;
-#[macro_use]
-extern crate serde_derive;
+#[macro_use] extern crate serde_derive;
 extern crate serde_json;
-extern crate failure;
+#[macro_use] extern crate failure;
+extern crate strum;
+#[macro_use] extern crate strum_macros;
 
 use termion::{clear, cursor, style};
 use termion::raw::IntoRawMode;
@@ -21,28 +22,22 @@ mod loader;
 mod combatants;
 
 use meters::Meter;
-use combatants::{Combatant, Classes, Class};
+use combatants::{Combatant, Classes};
 
 // Box drawing characters
 const TOP_RIGHT : &'static str = "┐";
 const TOP_LEFT : &'static str = "┌";
 const BOTTOM_RIGHT : &'static str = "┘";
 const BOTTOM_LEFT : &'static str = "└";
-const CROSS : &'static str = "┼";
+//const CROSS : &'static str = "┼";
 const HORZ : &'static str = "─";
-const LEFT_TEE : &'static str = "├";
-const RIGHT_TEE : &'static str = "┤";
+//const LEFT_TEE : &'static str = "├";
+//const RIGHT_TEE : &'static str = "┤";
 const BOTTOM_TEE : &'static str = "┴";
 const TOP_TEE : &'static str = "┬";
 const VERT : &'static str = "│";
 
 const MAX_COMBATANTS : usize = 32;
-
-enum State {
-    Input,
-    Target { from: usize, to: usize },
-    Name,
-}
 
 struct Battle<R: Read, W: Write> {
     stdin: Keys<R>,
@@ -61,7 +56,6 @@ impl<R: Read, W: Write> Battle<R, W> {
             stdin: stdin.keys(),
             stdout: stdout,
             sel: None,
-            //state: State::Input,
             combatants: Vec::with_capacity(MAX_COMBATANTS),
             round: 1,
             pos: 0,
@@ -91,16 +85,6 @@ impl<R: Read, W: Write> Battle<R, W> {
         write!(self.stdout, "{}{}", clear::All, cursor::Goto(1, 2)).unwrap();
         // write the top frame
         self.draw_border(true);
-            /*
-        self.stdout.write(TOP_LEFT.as_bytes()).unwrap();
-        self.stdout.write(HORZ.as_bytes()).unwrap();
-        let round = format!("R: {:02}", self.round);
-        self.stdout.write(round.as_bytes()).unwrap();
-        for _ in 0..(self.width - 1 - round.len() as u16) {
-            self.stdout.write(HORZ.as_bytes()).unwrap();
-        }
-        self.stdout.write(TOP_RIGHT.as_bytes()).unwrap();
-        */
         self.stdout.write(b"\n\r").unwrap();
         // write combatant name and display combatant info
         for i in 0..self.height {
@@ -151,21 +135,9 @@ impl<R: Read, W: Write> Battle<R, W> {
                 },
                 _ => write!(self.stdout, " {} ", c),
             }.unwrap();
-            // match self.state {
-            //     State::Target { from: f, .. } if f == i => {
-            //         write!(self.stdout, " {}{}{} ", style::Bold, ctext, style::Reset)
-            //     },
-            //     _ if self.pos == i => {
-            //         write!(self.stdout, " {}{}{} ", style::Invert, ctext, style::Reset)
-            //     },
-            //     _ => write!(self.stdout, " {} ", c),
-            // }.unwrap();
-            //self.stdout.write(b" ").unwrap();//.repeat(self.width as usize - 14 - ctext.len()).as_bytes()).unwrap();
         } else {
             let c = Combatant::default();
             write!(self.stdout, " {} ", format!("{}", c).replace(|c : char| c != '│', " ")).unwrap();
-            //self.stdout.write_all(b" +").unwrap();
-            //self.stdout.write_all(" ".repeat(format!("{}", c).len() - 10).as_bytes()).unwrap();
         }
         self.stdout.write(VERT.as_bytes()).unwrap();
         self.stdout.write(b"\n\r").unwrap();
@@ -196,7 +168,6 @@ impl<R: Read, W: Write> Battle<R, W> {
                         Some(i) if i == self.pos => None,
                         _ => Some(self.pos),
                     };
-                    //self.state = State::Target{ from: self.pos, to: self.pos };
                 },
                 Char('j') => self.down(),
                 Char('k') => self.up(),
@@ -320,28 +291,41 @@ impl<R: Read, W: Write> Battle<R, W> {
         // receive info from user
         let name = self.read_line("Name: ");
         write!(self.stdout, "{}", clear::CurrentLine).unwrap();
-        let hp = self.read_line("HP: ").parse::<Meter<i32>>().unwrap();
-        let atts = self.read_line("Attacks: ").parse::<Meter<u32>>().unwrap();
-        let c = Combatant::new(name, hp, atts, 1, Classes::Single(Class::Monster));
+        let hp = match self.read_line("HP: ").parse::<Meter<i32>>() {
+            Ok(h) => h,
+            Err(_) => return,
+        };
+        let atts = match self.read_line("Attacks: ").parse::<Meter<u32>>() {
+            Ok(a) => a,
+            Err(_) => return,
+        };
+        let class = match self.read_line("Class: ").parse::<Classes>() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let lvl = match self.read_line("Level/HD: ").parse::<u32>() {
+            Ok(n) => n,
+            Err(_) => return,
+        };
+        let c = Combatant::new(name, hp, atts, lvl, class);
         self.combatants.push(c);
         self.sort();
     }
 
+    /// Initialize the combatant underneath the cursor.
     fn init_combatant(&mut self) {
-        if let Some(f) = self.sel {
-        //if let State::Target { from: f, .. } = self.state {
+        if self.pos < self.combatants.len() {
             let team = self.read_char("Team: ").and_then(|c| c.to_digit(10));
-            self.combatants[f].team(team);
+            self.combatants[self.pos].team(team);
             write!(self.stdout, "{}", clear::CurrentLine).unwrap();
             let init = self.read_char("Initiative: ").and_then(|c| c.to_digit(10));
-            self.combatants[f].init(init);
+            self.combatants[self.pos].init(init);
         }
     }
 
-    /// Duplicate the combatant, renaming if given a new name.
+    /// Duplicate the combatant underneath the cursor, renaming if given a new name.
     fn copy_combatant<S: Into<String>>(&mut self, name: Option<S>) {
         if let Some(f) = self.sel {
-        //if let State::Target { from: f, .. } = self.state {
             let mut c = self.combatants[f].clone();
             if let Some(name) = name {
                 c.rename(name);
@@ -350,15 +334,9 @@ impl<R: Read, W: Write> Battle<R, W> {
         }
     }
 
-    // Target an attack from one combatant upon another.
-    //fn target_combatant(&mut self, att_ix: usize, def_ix: usize) {
-        //self.state = State::Target { from: att_ix, to: def_ix };
-    //}
-
     fn attack(&mut self, dam: i32) {
         let t = self.pos;
         if let Some(f) = self.sel {
-        //if let State::Target { from: f, to: t } = self.state {
             if self.combatants[f].in_combat() {
                 if self.combatants[f].can_attack() {
                     self.combatants[f].deal_hit(dam);
@@ -375,27 +353,20 @@ impl<R: Read, W: Write> Battle<R, W> {
     }
 
     fn heal(&mut self, dam: i32) {
-        if let Some(t) = self.sel {
-        //if let State::Target { to: t, .. } = self.state {
-            self.combatants[t].heal(dam);
+        if let Some(f) = self.sel {
+            self.combatants[f].heal(dam);
         }
     }
 
     fn down(&mut self) {
         if self.pos + 1 < self.combatants.len() {
             self.pos += 1;
-            // if let State::Target { to: ref mut t, .. } = self.state {
-            //     *t = self.pos;
-            // }
         }
     }
 
     fn up(&mut self) {
         if self.pos > 0 {
             self.pos -= 1;
-            // if let State::Target { to: ref mut t, .. } = self.state {
-            //     *t = self.pos;
-            // }
         }
     }
 }

@@ -2,6 +2,8 @@
 
 use meters::Meter;
 use std::fmt;
+use std::str::FromStr;
+use strum::ParseError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Combatant {
@@ -28,21 +30,74 @@ pub enum Classes {
     Single(Class),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub enum Class {
-    Cleric,
-    Druid,
-    Fighter,
-    Paladin,
-    Ranger,
-    Mage,
-    Illusionist,
-    Thief,
-    Assassin,
-    Monk,
-    Bard,
-    Monster,
+#[derive(Debug, Fail)]
+#[fail(display = "Invalid class name")]
+pub struct ClassParseError;
+
+impl FromStr for Classes {
+    type Err = ClassParseError;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let classes : Result<Vec<Class>, ParseError> = s.split("/")
+            .map(|c| c.parse::<Class>()).collect();
+        classes.and_then(|c| if c.len() > 1 {
+            Ok(Classes::Multi(c))
+        } else {
+            Ok(Classes::Single(c[0]))
+        }).or_else(|_| Err(ClassParseError))
+    }
 }
+
+#[derive(EnumString, Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum Class {
+    #[strum(serialize = "c")]
+    Cleric,
+    #[strum(serialize = "d")]
+    Druid,
+    #[strum(serialize = "f")]
+    Fighter,
+    #[strum(serialize = "p")]
+    Paladin,
+    #[strum(serialize = "r")]
+    Ranger,
+    #[strum(serialize = "ma")]
+    Mage,
+    #[strum(serialize = "i")]
+    Illusionist,
+    #[strum(serialize = "t")]
+    Thief,
+    #[strum(serialize = "a")]
+    Assassin,
+    #[strum(serialize = "mo")]
+    Monk,
+    #[strum(serialize = "b")]
+    Bard,
+    #[strum(serialize = "-")]
+    Monster,
+    #[strum(serialize = "_")]
+    MagicMonster,
+}
+
+// impl FromStr for Class {
+//     type Err = ClassParseError;
+//     fn from_str(s: &str) -> Result<Self, Self::Err> {
+//         match s.to_lowercase().as_ref() {
+//             "cleric" | "c" => Ok(Class::Cleric),
+//             "druid" | "d" => Ok(Class::Druid),
+//             "fighter" | "f" => Ok(Class::Fighter),
+//             "paladin" | "p" => Ok(Class::Paladin),
+//             "ranger" | "r" => Ok(Class::Ranger),
+//             "mage" | "ma" => Ok(Class::Mage),
+//             "illusionist" | "i" => Ok(Class::Illusionist),
+//             "thief" | "t" => Ok(Class::Thief),
+//             "assassin" | "a" => Ok(Class::Assassin),
+//             "monk" | "mo" => Ok(Class::Monk),
+//             "bard" | "b" => Ok(Class::Bard),
+//             "monster" | "-" => Ok(Class::Monster),
+//             "magicmonster" | "_" => Ok(Class::MagicMonster),
+//             _ => Err(ClassParseError(s.into())),
+//         }
+//     }
+// }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct ClassRefs {
