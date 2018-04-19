@@ -187,10 +187,12 @@ impl<R: Read, W: Write> Battle<R, W> {
                 Char('j') => self.down(),
                 Char('k') => self.up(),
                 Char('q') => return,
-                // add combatant
                 Char('n') => {
                     self.add_combatant();
                 },
+                Char('i') => {
+                    self.init_combatant();
+                }
                 Char('a') => {
                     // make sure from has enough attacks
                     let dam = self.read_line("Damage: ").parse::<i32>();
@@ -202,6 +204,15 @@ impl<R: Read, W: Write> Battle<R, W> {
                 },
                 Char('x') => {
                     self.advance();
+                },
+                Char('y') => {
+                    let s = self.read_line("Name: ");
+                    let name = if s.len() == 0 {
+                        None
+                    } else {
+                        Some(s)
+                    };
+                    self.copy_combatant(name);
                 },
                 Ctrl('c') => {
                     // terminate signal
@@ -231,11 +242,11 @@ impl<R: Read, W: Write> Battle<R, W> {
         // produce iterator of combatants
         let mut initiatives = self.combatants.clone().into_iter()
             // calculate init
-            .map(|c| (c.init(), c))
-            // filter out dead
-            .filter(|&(i, _)| i > 0)
+            .map(|c| (c.get_init(), c))
+            // filter out dead, but keep uninitialized
+            .filter(|&(i, _)| match i { Some(n) => n > 0, None => true })
             .collect::<Vec<_>>();
-        // sort with fastest at the top
+        // sort with fastest at the top (None elements go to bottom!)
         initiatives.sort_by(|a, b| b.0.cmp(&a.0));
         self.combatants = initiatives.into_iter()
             .map(|(_, c)| c)
@@ -294,27 +305,33 @@ impl<R: Read, W: Write> Battle<R, W> {
     fn add_combatant(&mut self) {
         // receive info from user
         let name = self.read_line("Name: ");
-        let team = 'team: loop {
-            let i = self.read_char("Team: ").and_then(|c| c.to_digit(10));
-            match i {
-                Some(_) => break i,
-                None => (),
-            }
-        }.unwrap();
-        write!(self.stdout, "{}", clear::CurrentLine).unwrap();
-        let init = 'init: loop {
-            let i = self.read_char("Initiative: ").and_then(|c| c.to_digit(10));
-            match i {
-                Some(_) => break i,
-                None => (),
-            }
-        }.unwrap();
         write!(self.stdout, "{}", clear::CurrentLine).unwrap();
         let hp = self.read_line("HP: ").parse::<Meter<i32>>().unwrap();
         let atts = self.read_line("Attacks: ").parse::<Meter<u32>>().unwrap();
-        let c = Combatant::new(name, team, init, hp, atts, 1, Classes::Single(Class::Monster));
+        let c = Combatant::new(name, hp, atts, 1, Classes::Single(Class::Monster));
         self.combatants.push(c);
         self.sort();
+    }
+
+    fn init_combatant(&mut self) {
+        if let State::Target { from: f, .. } = self.state {
+            let team = self.read_char("Team: ").and_then(|c| c.to_digit(10));
+            self.combatants[f].team(team);
+            write!(self.stdout, "{}", clear::CurrentLine).unwrap();
+            let init = self.read_char("Initiative: ").and_then(|c| c.to_digit(10));
+            self.combatants[f].init(init);
+        }
+    }
+
+    /// Duplicate the combatant, renaming if given a new name.
+    fn copy_combatant<S: Into<String>>(&mut self, name: Option<S>) {
+        if let State::Target { from: f, .. } = self.state {
+            let mut c = self.combatants[f].clone();
+            if let Some(name) = name {
+                c.rename(name);
+            }
+            self.combatants.push(c);
+        }
     }
 
     /// Target an attack from one combatant upon another.
@@ -324,9 +341,17 @@ impl<R: Read, W: Write> Battle<R, W> {
 
     fn attack(&mut self, dam: i32) {
         if let State::Target { from: f, to: t } = self.state {
-            if self.combatants[f].can_attack() {
-                self.combatants[f].deal_hit(dam);
-                self.combatants[t].recv_hit(dam);
+            if self.combatants[f].in_combat() {
+                if self.combatants[f].can_attack() {
+                    self.combatants[f].deal_hit(dam);
+                    self.combatants[t].recv_hit(dam);
+                } else {
+                    write!(self.stdout, "Not enough attacks left!").unwrap();
+                    self.stdout.flush().unwrap();
+                }
+            } else {
+                write!(self.stdout, "Not in combat yet!").unwrap();
+                self.stdout.flush().unwrap();
             }
         }
     }

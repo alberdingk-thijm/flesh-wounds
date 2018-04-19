@@ -14,8 +14,8 @@ pub struct Combatant {
     attacks: Meter<u32>,
     ac: i32,
     status: Status,
-    team: u32,
-    init: u32,
+    team: Option<u32>,
+    init: Option<u32>,
     dealt: i32,
     recvd: i32,
     round: u32,
@@ -83,8 +83,8 @@ impl Default for Combatant {
     fn default() -> Self {
         Combatant {
             name: "?".repeat(16),
-            team: 0,
-            init: 0,
+            team: None,
+            init: None,
             hp: "1/1".parse::<Meter<i32>>().unwrap(),
             abilities: None,
             ac: 10,
@@ -104,8 +104,8 @@ impl fmt::Display for Combatant {
         // 4 digits seems like a reasonable limit on hp
         write!(f, "{:16.16}{sep}{}{sep}{}{sep}{:>9.9}{sep}{}{sep}{}",
                self.name,
-               self.team,
-               self.init,
+               self.team.map(|t| format!("{}", t)).unwrap_or("-".into()),
+               self.init.map(|t| format!("{}", t)).unwrap_or("-".into()),
                // apply format so that the padding works correctly
                format!("{}", self.hp),
                self.attacks,
@@ -120,11 +120,11 @@ impl Combatant {
     /// Modifier specifying total possible range of base init values.
     const INIT_MOD : u32 = 12;
 
-    pub fn new<S: Into<String>>(name: S, team: u32, init: u32, hp: Meter<i32>, attacks: Meter<u32>, hd: u32, classes: Classes) -> Self {
+    pub fn new<S: Into<String>>(name: S, hp: Meter<i32>, attacks: Meter<u32>, hd: u32, classes: Classes) -> Self {
         Combatant {
             name: name.into(),
-            team: team,
-            init: init,
+            team: None,
+            init: None,
             hp: hp,
             status: Status::Healthy,
             abilities: None,
@@ -138,6 +138,18 @@ impl Combatant {
         }
     }
 
+    pub fn rename<S: Into<String>>(&mut self, name: S) {
+        self.name = name.into();
+    }
+
+    pub fn team(&mut self, team: Option<u32>) {
+        self.team = team;
+    }
+
+    pub fn init(&mut self, init: Option<u32>) {
+        self.init = init;
+    }
+
     pub fn update(&mut self) {
         self.round += 1;
         if let Status::Stunned(_) = self.status {
@@ -149,12 +161,12 @@ impl Combatant {
     }
 
     /// Calculate initiative relative to base initiative and current state.
-    pub fn init(&self) -> u32 {
-        match self.status {
-            Status::Healthy => self.init + Combatant::INIT_MOD * 2,
-            Status::Stunned(x) => self.init + Combatant::INIT_MOD - x,
-            Status::Dead => self.init,
-        }
+    pub fn get_init(&self) -> Option<u32> {
+        self.init.map(|i| match self.status {
+            Status::Healthy => i + Combatant::INIT_MOD * 2,
+            Status::Stunned(x) => i + Combatant::INIT_MOD - x,
+            Status::Dead => 0,
+        })
     }
 
     fn min_hp(&self) -> i32 {
@@ -165,7 +177,14 @@ impl Combatant {
         }
     }
 
+    /// Return true if considered "in combat".
+    /// Equivalent to having a team and initiative set.
+    pub fn in_combat(&self) -> bool {
+        self.init.is_some() && self.team.is_some()
+    }
+
     /// Return true if able to attack.
+    /// Must have attacks to spend.
     pub fn can_attack(&self) -> bool {
         self.attacks.curr() >= 1
     }
