@@ -5,7 +5,7 @@ extern crate serde;
 extern crate serde_json;
 #[macro_use] extern crate failure;
 extern crate strum;
-#[macro_use] extern crate strum_macros;
+//#[macro_use] extern crate strum_macros;
 
 use termion::{clear, cursor, style};
 use termion::raw::IntoRawMode;
@@ -22,7 +22,7 @@ mod loader;
 mod combatants;
 
 use meters::Meter;
-use combatants::{Combatant, Classes};
+use combatants::{Combatant, Classes, Abilities};
 
 // Box drawing characters
 const TOP_RIGHT : &'static str = "┐";
@@ -87,14 +87,15 @@ impl<R: Read, W: Write> Battle<R, W> {
         self.draw_border(true);
         self.stdout.write(b"\n\r").unwrap();
         // write combatant name and display combatant info
-        for i in 0..self.height {
+        for i in 0..self.combatants.len() {
             self.draw_combatant_row(i as usize);
         }
         // write the bottom frame
         self.draw_border(false);
         // draw prompt box
         self.draw_prompt_box();
-
+        // draw details
+        self.draw_details();
         write!(self.stdout, "{}", cursor::Goto(1, 1)).unwrap();
         self.stdout.flush().unwrap();
     }
@@ -106,8 +107,11 @@ impl<R: Read, W: Write> Battle<R, W> {
         if top {
             self.stdout.write(TOP_LEFT.as_bytes()).unwrap();
             self.stdout.write(HORZ.as_bytes()).unwrap();
-            def = def.replace(v, TOP_TEE);
-            def = format!("R: {:02}{}", self.round, def.chars().skip(5).collect::<String>());
+            //def = def.replace(v, TOP_TEE);
+            //def = format!("R: {:02}{}", self.round, def.chars().skip(5).collect::<String>());
+            def = format!("R: {rn:02}{h1}{sep}{t}{sep}{i}{sep}{hp}{h2}{sep}{at}{sep}{ac:02}{sep}{th:02}{sep}{st}",
+                          rn = self.round, h1 = HORZ.repeat(11), t = "T", i = "I", hp = "HP", h2 = HORZ.repeat(7),
+                          at = "Att", ac = "AC", th="TH", st=HORZ, sep=format!("{0}{1}{0}", HORZ, TOP_TEE));
             self.stdout.write(def.as_bytes()).unwrap();
             self.stdout.write(HORZ.as_bytes()).unwrap();
             self.stdout.write(TOP_RIGHT.as_bytes()).unwrap();
@@ -148,6 +152,15 @@ impl<R: Read, W: Write> Battle<R, W> {
         self.stdout.flush().unwrap();
     }
 
+    fn draw_details(&mut self) {
+        if let Some(p) = self.sel {
+            write!(self.stdout, "{}{}",
+                   cursor::Goto(1, self.height + 4),
+                   self.combatants[p].describe()).unwrap();
+            self.stdout.flush().unwrap();
+        }
+    }
+
     /// Start the battle.
     fn start(&mut self) {
         loop {
@@ -173,11 +186,15 @@ impl<R: Read, W: Write> Battle<R, W> {
                 Char('k') => self.up(),
                 Char('q') => return,
                 Char('n') => {
-                    self.add_combatant();
+                    // TODO: don't eat the error
+                    self.add_combatant().unwrap_or(());
                 },
                 Char('i') => {
                     self.init_combatant();
-                }
+                },
+                Char('e') => {
+                    self.add_abilities();
+                },
                 Char('a') => {
                     // make sure from has enough attacks
                     let dam = self.read_line("Damage: ").parse::<i32>();
@@ -287,29 +304,36 @@ impl<R: Read, W: Write> Battle<R, W> {
     }
 
     /// Add a combatant to the battle.
-    fn add_combatant(&mut self) {
+    fn add_combatant(&mut self) -> Result<(), Error> {
         // receive info from user
         let name = self.read_line("Name: ");
         write!(self.stdout, "{}", clear::CurrentLine).unwrap();
-        let hp = match self.read_line("HP: ").parse::<Meter<i32>>() {
-            Ok(h) => h,
-            Err(_) => return,
+        let hp = self.read_line("HP: ").parse::<Meter<i32>>()?;
+        let atts = self.read_line("Attacks: ").parse::<Meter<u32>>()?;
+        let mut class = self.read_line("Class: ").parse::<Classes>()?;
+        match class {
+            Classes::Monster { .. } => {
+                let hd = self.read_line("HD: ").parse::<u32>()?;
+                class = class.lvl(hd);
+            },
+            _ => {
+                let lvl = self.read_line("Level: ").parse::<u32>()?;
+                class = class.lvl(lvl);
+            },
         };
-        let atts = match self.read_line("Attacks: ").parse::<Meter<u32>>() {
-            Ok(a) => a,
-            Err(_) => return,
-        };
-        let class = match self.read_line("Class: ").parse::<Classes>() {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-        let lvl = match self.read_line("Level/HD: ").parse::<u32>() {
-            Ok(n) => n,
-            Err(_) => return,
-        };
-        let c = Combatant::new(name, hp, atts, lvl, class);
+        let ac = self.read_line("AC: ").parse::<i32>()?;
+        let c = Combatant::new(name, hp, atts, class, ac);
         self.combatants.push(c);
         self.sort();
+        Ok(())
+    }
+
+    fn add_abilities(&mut self) {
+        if self.pos < self.combatants.len() {
+            let abils = self.read_line("Ability scores (STR/INT/WIS/DEX/CON/CHA): ")
+                .parse::<Abilities>().ok();
+            self.combatants[self.pos].abilities(abils);
+        }
     }
 
     /// Initialize the combatant underneath the cursor.
