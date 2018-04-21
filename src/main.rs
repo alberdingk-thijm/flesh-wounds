@@ -310,17 +310,13 @@ impl<R: Read, W: Write> Battle<R, W> {
         write!(self.stdout, "{}", clear::CurrentLine).unwrap();
         let hp = self.read_line("HP: ").parse::<Meter<i32>>()?;
         let atts = self.read_line("Attacks: ").parse::<Meter<u32>>()?;
-        let mut class = self.read_line("Class: ").parse::<Classes>()?;
-        match class {
-            Classes::Monster { .. } => {
-                let hd = self.read_line("HD: ").parse::<u32>()?;
-                class = class.lvl(hd);
-            },
-            _ => {
-                let lvl = self.read_line("Level: ").parse::<u32>()?;
-                class = class.lvl(lvl);
-            },
-        };
+        let cstr = self.read_line("Class: ");
+        let mut class = cstr.parse::<Classes>()?;
+        // if no level provided, ask
+        if !cstr.ends_with(char::is_numeric) {
+            let lvlhd = self.read_line("Level/HD: ").parse::<u32>()?;
+            class = class.lvl(lvlhd);
+        }
         let ac = self.read_line("AC: ").parse::<i32>()?;
         let c = Combatant::new(name, hp, atts, class, ac);
         self.combatants.push(c);

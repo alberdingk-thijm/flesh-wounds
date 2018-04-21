@@ -14,6 +14,7 @@ pub struct Combatant {
     hp: Meter<i32>,
     attacks: Meter<u32>,
     ac: i32,
+    thac0: u32,
     status: Status,
     team: Option<u32>,
     init: Option<u32>,
@@ -126,22 +127,28 @@ impl fmt::Display for Classes {
 impl FromStr for Classes {
     type Err = ParseClassError;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // detach optional numeric portion
+        let (s, n) = s.find(char::is_numeric).and_then(|i| {
+            // split, return num and shortened s
+            let (s, nums) = s.split_at(i);
+            nums.parse::<u32>().map(|n| (s, n)).ok()
+        }).unwrap_or((s, 1));
         match s {
-            _ if s.starts_with("*") => s.get(1..).ok_or(ParseClassError::Name)
-                .and_then(|s| s.parse::<u32>().map_err(|e| e.into()))
-                .map(|hd| Classes::Monster { magical: true, hd: hd }),
-            _ if s.starts_with("-") => s.get(1..).ok_or(ParseClassError::Name)
-                .and_then(|s| s.parse::<u32>().map_err(|e| e.into()))
-                .map(|hd| Classes::Monster { magical: false, hd: hd }),
+            // magical monsters: ![N]
+            "!" => Ok(Classes::Monster { magical: true, hd: n }),
+            // regular monsters .[N]
+            "." => Ok(Classes::Monster { magical: false, hd: n }),
             _ => {
                 let classes : Result<Vec<Class>, ParseClassError> = s.split("/")
                     .map(|c| c.parse::<Class>()).collect();
                 classes.and_then(|c| if c.len() > 1 {
-                    Ok(Classes::Multi { name: c, lvl: 1 })
+                    Ok(Classes::Multi { name: c, lvl: n })
+                } else if c.len() == 1 {
+                    Ok(Classes::Single { name: c[0], lvl: n })
                 } else {
-                    Ok(Classes::Single { name: c[0], lvl: 1 })
+                    Err(ParseClassError::Name)
                 })
-            }
+            },
         }
     }
 }
@@ -199,26 +206,24 @@ impl FromStr for Class {
     }
 }
 
-impl Class {
-}
-
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
-pub struct ClassRefs {
+pub struct ClassRecord {
+    name: Class,
     xp: Abilities,
     multi: Abilities,
     min: Abilities,
-    thac0: u32,
+    thac0: [u32; 13],
     saves: Saves,
 }
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct Saves {
-    poisdeath: u32,
-    parapet: u32,
-    poly: u32,
-    rsw: u32,
-    breath: u32,
-    magic: u32,
+    poison: [u32; 20],
+    para: [u32; 20],
+    poly: [u32; 20],
+    rsw: [u32; 20],
+    breath: [u32; 20],
+    magic: [u32; 20],
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Serialize, Deserialize)]
@@ -284,6 +289,7 @@ impl Default for Combatant {
             hp: "1/1".parse::<Meter<i32>>().unwrap(),
             abilities: None,
             ac: 10,
+            thac0: 20,
             status: Status::Healthy,
             attacks: "1/1".parse::<Meter<u32>>().unwrap(),
             class: Classes::Monster { magical: false, hd: 1 },
@@ -306,7 +312,7 @@ impl fmt::Display for Combatant {
                                       hp = format!("{}", self.hp),
                                       at = self.attacks,
                                       ac = self.ac,
-                                      th = self.class.thac0(),
+                                      th = self.thac0,
                                       st = self.status,
                                       sep = " │ "),
             Status::Stunned(_) => write!(f, "{col}{n:16.16}{sep}{t}{sep}{i}{sep}{hp:>9.9}{sep}{at}{sep}{ac:02}{sep}{th:02}{sep}{st}{res}",
@@ -317,7 +323,7 @@ impl fmt::Display for Combatant {
                                          hp = format!("{}", self.hp),
                                          at = self.attacks,
                                          ac = self.ac,
-                                         th = self.class.thac0(),
+                                         th = self.thac0,
                                          st = self.status,
                                          sep = " │ ",
                                          col = color::Fg(color::Yellow),
@@ -330,7 +336,7 @@ impl fmt::Display for Combatant {
                                    hp = format!("{}", self.hp),
                                    at = self.attacks,
                                    ac = self.ac,
-                                   th = self.class.thac0(),
+                                   th = self.thac0,
                                    st = self.status,
                                    sep = " │ ",
                                    col = color::Fg(color::Red),
@@ -354,6 +360,7 @@ impl Combatant {
             status: Status::Healthy,
             abilities: None,
             ac: ac,
+            thac0: classes.thac0(),
             attacks: attacks,
             class: classes,
             dealt: 0,
