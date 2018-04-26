@@ -1,3 +1,4 @@
+#![macro_use]
 #![allow(dead_code)]
 extern crate termion;
 extern crate serde;
@@ -16,6 +17,29 @@ use failure::Error;
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::fs::File;
 use std::path::Path;
+
+#[macro_use]
+mod macros {
+    /// Create a boxed closure for generating colored versions of strings.
+    macro_rules! colorize {
+        ( $col:expr ) => {
+            Box::new(| s | {
+                format!("{}{}{}", color::Fg($col), s, color::Fg(color::Reset))
+            })
+        }
+    }
+    /// Write a series of colored cells out, where each cell specifies how it is represented.
+    macro_rules! color_cells {
+        ( $fmt:expr, col = $col:expr, sep = $sep:expr, $( $e:expr => $f:expr ),* ) => {
+            // Insert color wrapper around each block.
+            write!($fmt, "{}", 
+                &[
+                    $(($col)(format!($f, $e))),*
+                ].join($sep)
+            )
+        }
+    }
+}
 
 mod meters;
 mod loader;
@@ -48,6 +72,14 @@ struct Battle<R: Read, W: Write> {
     pos: usize,
     width: u16,
     height: u16,
+}
+
+#[derive(Debug, Fail)]
+enum BattleError {
+    #[fail(display = "No input received")]
+    NoInput,
+    #[fail(display = "Parse error")]
+    Parse,
 }
 
 impl<R: Read, W: Write> Battle<R, W> {
@@ -169,11 +201,11 @@ impl<R: Read, W: Write> Battle<R, W> {
             use termion::event::Key::*;
             match b {
                 Ctrl('s') => {
-                    let p = self.read_line("Save to file: ");
+                    let p = self.read_line("Save to file: ").unwrap();
                     self.save_combatants(p).unwrap();
                 },
                 Ctrl('o') => {
-                    let p = self.read_line("Open file: ");
+                    let p = self.read_line("Open file: ").unwrap();
                     self.load_combatants(p).unwrap();
                 }
                 Char('\n') => {
@@ -195,25 +227,33 @@ impl<R: Read, W: Write> Battle<R, W> {
                 Char('e') => {
                     self.add_abilities();
                 },
+                Char('+') => {
+                    let atts = self.read_line("Attacks: ").unwrap().parse::<Meter<u32>>();
+                    atts.map(|a| self.boost_attacks(a)).ok();
+                },
                 Char('a') => {
                     // make sure from has enough attacks
-                    let dam = self.read_line("Damage: ").parse::<i32>();
+                    let dam = self.read_line("Damage: ").unwrap().parse::<i32>();
                     dam.map(|d| self.attack(d)).ok();
                 },
+                Char('d') => {
+                    let dam = self.read_line("Damage: ").unwrap().parse::<i32>();
+                    dam.map(|d| self.damage(d)).ok();
+                }
                 Char('h') => {
-                    let heal = self.read_line("Healing: ").parse::<i32>();
+                    let heal = self.read_line("Healing: ").unwrap().parse::<i32>();
                     heal.map(|h| self.heal(h)).ok();
                 },
                 Char('x') => {
                     self.advance();
                 },
                 Char('y') => {
-                    let s = self.read_line("Name: ");
-                    let name = if s.len() == 0 {
+                    let s = self.read_line("Name: ").ok();
+                    let name = s.and_then(|s| if s.len() == 0 {
                         None
                     } else {
                         Some(s)
-                    };
+                    });
                     self.copy_combatant(name);
                 },
                 Ctrl('c') => {
@@ -269,7 +309,7 @@ impl<R: Read, W: Write> Battle<R, W> {
         }
     }
 
-    fn read_line(&mut self, prompt: &str) -> String {
+    fn read_line(&mut self, prompt: &str) -> Result<String, BattleError> {
         let mut s = String::from("");
         write!(self.stdout, "{}> {}{}", cursor::Goto(1, 1), prompt, cursor::Show).unwrap();
         self.stdout.flush().unwrap();
@@ -285,8 +325,7 @@ impl<R: Read, W: Write> Battle<R, W> {
                     s.push(c)
                 },
                 Key::Ctrl('c') => {
-                    // FIXME: add some way to also jump out of caller's control flow
-                    break
+                    return Err(BattleError::NoInput)
                 },
                 Key::Backspace => { 
                     // remove a character
@@ -300,24 +339,28 @@ impl<R: Read, W: Write> Battle<R, W> {
         }
         write!(self.stdout, "{}{}", cursor::Hide, cursor::Goto(1, 1)).unwrap();
         self.stdout.flush().unwrap();
-        s
+        Ok(s)
     }
 
     /// Add a combatant to the battle.
     fn add_combatant(&mut self) -> Result<(), Error> {
         // receive info from user
-        let name = self.read_line("Name: ");
+        let name = self.read_line("Name: ")?;
         write!(self.stdout, "{}", clear::CurrentLine).unwrap();
-        let hp = self.read_line("HP: ").parse::<Meter<i32>>()?;
-        let atts = self.read_line("Attacks: ").parse::<Meter<u32>>()?;
-        let cstr = self.read_line("Class: ");
+        let mut input = self.read_line("HP: ")?;
+        let hp = input.parse::<Meter<i32>>()?;
+        input = self.read_line("Attacks: ")?;
+        let atts = input.parse::<Meter<u32>>()?;
+        let cstr = self.read_line("Class: ")?;
         let mut class = cstr.parse::<Classes>()?;
         // if no level provided, ask
         if !cstr.ends_with(char::is_numeric) {
-            let lvlhd = self.read_line("Level/HD: ").parse::<u32>()?;
+            input = self.read_line("Level/HD: ")?;
+            let lvlhd = input.parse::<u32>()?;
             class = class.lvl(lvlhd);
         }
-        let ac = self.read_line("AC: ").parse::<i32>()?;
+        input = self.read_line("AC: ")?;
+        let ac = input.parse::<i32>()?;
         let c = Combatant::new(name, hp, atts, class, ac);
         self.combatants.push(c);
         self.sort();
@@ -327,7 +370,7 @@ impl<R: Read, W: Write> Battle<R, W> {
     fn add_abilities(&mut self) {
         if self.pos < self.combatants.len() {
             let abils = self.read_line("Ability scores (STR/INT/WIS/DEX/CON/CHA): ")
-                .parse::<Abilities>().ok();
+                .unwrap().parse::<Abilities>().ok();
             self.combatants[self.pos].abilities(abils);
         }
     }
@@ -354,6 +397,14 @@ impl<R: Read, W: Write> Battle<R, W> {
         }
     }
 
+    /// Add damage to selected.
+    fn damage(&mut self, dam: i32) {
+        if let Some(f) = self.sel {
+            self.combatants[f].recv_hit(dam);
+        }
+    }
+
+    /// Perform an attack from selected to the current target, consuming attacks.
     fn attack(&mut self, dam: i32) {
         let t = self.pos;
         if let Some(f) = self.sel {
@@ -372,6 +423,14 @@ impl<R: Read, W: Write> Battle<R, W> {
         }
     }
 
+    /// Change the selected combatant's attacks.
+    fn boost_attacks(&mut self, atts: Meter<u32>) {
+        if let Some(f) = self.sel {
+            self.combatants[f].attacks(atts);
+        }
+    }
+
+    /// Heal the selected combatant.
     fn heal(&mut self, dam: i32) {
         if let Some(f) = self.sel {
             self.combatants[f].heal(dam);

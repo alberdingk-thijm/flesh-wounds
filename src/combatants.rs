@@ -302,46 +302,23 @@ impl Default for Combatant {
 
 impl fmt::Display for Combatant {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // 4 digits seems like a reasonable limit on hp
-        match self.status {
-            Status::Healthy => write!(f, "{n:16.16}{sep}{t}{sep}{i}{sep}{hp:>9.9}{sep}{at}{sep}{ac:02}{sep}{th:02}{sep}{st}",
-                                      n = self.name,
-                                      t = self.team.map(|t| format!("{}", t)).unwrap_or("-".into()),
-                                      i = self.init.map(|t| format!("{}", t)).unwrap_or("-".into()),
-                                      // apply format so that the padding works correctly
-                                      hp = format!("{}", self.hp),
-                                      at = self.attacks,
-                                      ac = self.ac,
-                                      th = self.thac0,
-                                      st = self.status,
-                                      sep = " │ "),
-            Status::Stunned(_) => write!(f, "{col}{n:16.16}{sep}{t}{sep}{i}{sep}{hp:>9.9}{sep}{at}{sep}{ac:02}{sep}{th:02}{sep}{st}{res}",
-                                         n = self.name,
-                                         t = self.team.map(|t| format!("{}", t)).unwrap_or("-".into()),
-                                         i = self.init.map(|t| format!("{}", t)).unwrap_or("-".into()),
-                                         // apply format so that the padding works correctly
-                                         hp = format!("{}", self.hp),
-                                         at = self.attacks,
-                                         ac = self.ac,
-                                         th = self.thac0,
-                                         st = self.status,
-                                         sep = " │ ",
-                                         col = color::Fg(color::Yellow),
-                                         res = color::Fg(color::Reset)),
-            Status::Dead => write!(f, "{col}{n:16.16}{sep}{t}{sep}{i}{sep}{hp:>9.9}{sep}{at}{sep}{ac:02}{sep}{th:02}{sep}{st}{res}",
-                                   n = self.name,
-                                   t = self.team.map(|t| format!("{}", t)).unwrap_or("-".into()),
-                                   i = self.init.map(|t| format!("{}", t)).unwrap_or("-".into()),
-                                   // apply format so that the padding works correctly
-                                   hp = format!("{}", self.hp),
-                                   at = self.attacks,
-                                   ac = self.ac,
-                                   th = self.thac0,
-                                   st = self.status,
-                                   sep = " │ ",
-                                   col = color::Fg(color::Red),
-                                   res = color::Fg(color::Reset)),
-        }
+        let team = self.team.map(|t| format!("{}", t)).unwrap_or("-".into());
+        let init = self.init.map(|t| format!("{}", t)).unwrap_or("-".into());
+        // apply format so that the padding works correctly
+        let col : Box<Fn(String) -> String> = match self.status {
+            Status::Healthy => colorize!(color::Black),
+            Status::Stunned(_) => colorize!(color::Yellow),
+            Status::Dead => colorize!(color::Red),
+        };
+        color_cells!(f, col = col, sep = &col(" │ ".into()),
+                     self.name => "{:16.16}",
+                     team => "{}",
+                     init => "{}",
+                     format!("{}", self.hp) => "{:>9.9}",
+                     self.attacks => "{}",
+                     self.ac => "{:02}",
+                     self.thac0 => "{:02}",
+                     self.status => "{}")
     }
 }
 
@@ -379,6 +356,10 @@ impl Combatant {
 
     pub fn init(&mut self, init: Option<u32>) {
         self.init = init;
+    }
+
+    pub fn attacks(&mut self, attacks: Meter<u32>) {
+        self.attacks = attacks;
     }
 
     pub fn abilities(&mut self, abilities: Option<Abilities>) {
