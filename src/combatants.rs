@@ -305,12 +305,16 @@ impl fmt::Display for Combatant {
         let team = self.team.map(|t| format!("{}", t)).unwrap_or("-".into());
         let init = self.init.map(|t| format!("{}", t)).unwrap_or("-".into());
         // apply format so that the padding works correctly
-        let col : Box<Fn(String) -> String> = match self.status {
-            Status::Healthy => colorize!(color::Black),
-            Status::Stunned(_) => colorize!(color::Yellow),
-            Status::Dead => colorize!(color::Red),
+        let col : Option<Box<Fn(String) -> String>> = match self.status {
+            Status::Healthy => None,
+            Status::Stunned(_) => Some(colorize!(color::Yellow)),
+            Status::Dead => Some(colorize!(color::Red)),
         };
-        color_cells!(f, col = col, sep = &col(" │ ".into()),
+        let sep = match col {
+            Some(ref c) => c(" │ ".into()),
+            None => " │ ".into(),
+        };
+        color_cells!(f, col = col, sep = &sep,
                      self.name => "{:16.16}",
                      team => "{}",
                      init => "{}",

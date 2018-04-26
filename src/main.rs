@@ -1,4 +1,3 @@
-#![macro_use]
 #![allow(dead_code)]
 extern crate termion;
 extern crate serde;
@@ -31,10 +30,17 @@ mod macros {
     /// Write a series of colored cells out, where each cell specifies how it is represented.
     macro_rules! color_cells {
         ( $fmt:expr, col = $col:expr, sep = $sep:expr, $( $e:expr => $f:expr ),* ) => {
-            // Insert color wrapper around each block.
+            // Insert optional color wrapper around each block.
             write!($fmt, "{}", 
                 &[
-                    $(($col)(format!($f, $e))),*
+                    $(match $col {
+                        Some(ref c) => {
+                            // annotate type
+                            let f : &Box<Fn(String) -> String> = c;
+                            f(format!($f, $e))
+                        },
+                        None => format!($f, $e)
+                    }),*
                 ].join($sep)
             )
         }
@@ -133,15 +139,15 @@ impl<R: Read, W: Write> Battle<R, W> {
     }
 
     fn draw_border(&mut self, top: bool) {
-        let v = VERT.chars().next().unwrap();
-        let mut def = format!("{}", Combatant::default())
-            .replace(|c| c != v, HORZ);
+        //let v = VERT.chars().next().unwrap();
+        //let mut def = format!("{}", Combatant::default())
+            //.replace(|c| c != v, HORZ);
         if top {
             self.stdout.write(TOP_LEFT.as_bytes()).unwrap();
             self.stdout.write(HORZ.as_bytes()).unwrap();
             //def = def.replace(v, TOP_TEE);
             //def = format!("R: {:02}{}", self.round, def.chars().skip(5).collect::<String>());
-            def = format!("R: {rn:02}{h1}{sep}{t}{sep}{i}{sep}{hp}{h2}{sep}{at}{sep}{ac:02}{sep}{th:02}{sep}{st}",
+            let def = format!("R: {rn:02}{h1}{sep}{t}{sep}{i}{sep}{hp}{h2}{sep}{at}{sep}{ac:02}{sep}{th:02}{sep}{st}",
                           rn = self.round, h1 = HORZ.repeat(11), t = "T", i = "I", hp = "HP", h2 = HORZ.repeat(7),
                           at = "Att", ac = "AC", th="TH", st=HORZ, sep=format!("{0}{1}{0}", HORZ, TOP_TEE));
             self.stdout.write(def.as_bytes()).unwrap();
@@ -150,8 +156,17 @@ impl<R: Read, W: Write> Battle<R, W> {
         } else {
             self.stdout.write(BOTTOM_LEFT.as_bytes()).unwrap();
             self.stdout.write(HORZ.as_bytes()).unwrap();
-            def = def.replace(v, BOTTOM_TEE);
-            self.stdout.write(def.as_bytes()).unwrap();
+            color_cells!(self.stdout, col = None, sep = &format!("{0}{1}{0}", HORZ, BOTTOM_TEE),
+                   HORZ.repeat(16) => "{}",
+                   HORZ => "{}",
+                   HORZ => "{}",
+                   HORZ.repeat(9) => "{}",
+                   HORZ.repeat(3) => "{}",
+                   HORZ.repeat(2) => "{}",
+                   HORZ.repeat(2) => "{}",
+                   HORZ => "{}").unwrap();
+            //def = def.replace(v, BOTTOM_TEE);
+            //self.stdout.write(def.as_bytes()).unwrap();
             self.stdout.write(HORZ.as_bytes()).unwrap();
             self.stdout.write(BOTTOM_RIGHT.as_bytes()).unwrap();
         }
