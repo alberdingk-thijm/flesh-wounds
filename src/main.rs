@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 extern crate termion;
 extern crate serde;
 #[macro_use] extern crate serde_derive;
@@ -45,10 +44,26 @@ mod macros {
             )
         }
     }
+
+    /// Popup a result and wait for the user to close it.
+    macro_rules! popup {
+        ( $x:expr => $stdout:expr, $stdin:expr ) => {
+            loop {
+                write!($stdout, "{}{}", clear::All, cursor::Goto(1, 1)).unwrap();
+                // write the message
+                $stdout.write(format!("{}", $x).as_bytes()).unwrap();
+                $stdout.flush().unwrap();
+                // await end
+                let b = $stdin.next().unwrap().unwrap();
+                if b == Key::Char('\n') {
+                    break
+                }
+            }
+        }
+    }
 }
 
 mod meters;
-mod loader;
 mod combatants;
 
 use meters::Meter;
@@ -67,6 +82,31 @@ const BOTTOM_TEE : &'static str = "┴";
 const TOP_TEE : &'static str = "┬";
 const VERT : &'static str = "│";
 
+const HELP : &'static str = "
+    Flesh Wounds Help:\r
+
+    F1          display help\r
+    ctrl-c, q   quit\r
+    ctrl-s      save\r
+    ctrl-o      open\r
+    n           new combatant\r
+    i           set combatant team and initiative\r
+    e           set combatant ability scores\r
+    +           set combatant attacks\r
+    H           set combatant HP\r
+    a           attack self->other\r
+    d           damage self\r
+    h           heal self\r
+    x           advance one round\r
+    y           duplicate combatant\r
+    z           display combatant xp\r
+    Return      select combatant\r
+    j           scroll down\r
+    k           scroll up\r
+
+    Press Enter to close this help and return to the program.\r
+";
+
 const MAX_COMBATANTS : usize = 32;
 
 struct Battle<R: Read, W: Write> {
@@ -76,16 +116,34 @@ struct Battle<R: Read, W: Write> {
     combatants: Vec<Combatant>,
     round: u32,
     pos: usize,
-    width: u16,
     height: u16,
+    autosave: Option<AutosaveSettings>,
+}
+
+struct AutosaveSettings {
+    prefix: String,
+    max_saves: u32,
+    save: u32,
+}
+
+impl AutosaveSettings {
+    fn get_save_path(&mut self) -> String {
+        self.save = (self.save + 1) % self.max_saves;
+        format!("{}{}.json", self.prefix, self.save)
+    }
+}
+
+impl Default for AutosaveSettings {
+    /// Create default autosave.
+    fn default() -> Self {
+        AutosaveSettings { prefix: ".auto".into(), max_saves: 5, save: 0 }
+    }
 }
 
 #[derive(Debug, Fail)]
 enum BattleError {
     #[fail(display = "No input received")]
     NoInput,
-    #[fail(display = "Parse error")]
-    Parse,
 }
 
 impl<R: Read, W: Write> Battle<R, W> {
@@ -97,25 +155,37 @@ impl<R: Read, W: Write> Battle<R, W> {
             combatants: Vec::with_capacity(MAX_COMBATANTS),
             round: 1,
             pos: 0,
-            width: format!("{}", Combatant::default()).len() as u16,
             height: MAX_COMBATANTS as u16,
+            autosave: Some(AutosaveSettings::default()),
         }
     }
 
     /// Load combatants from a file.
-    fn load_combatants<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Error> {
+    fn load_combat<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Error> {
         let f = File::open(path)?;
         let reader = BufReader::new(f);
-        let combatants : Vec<Combatant> = serde_json::from_reader(reader)?;
+        let (round, combatants) : (u32, Vec<Combatant>) = serde_json::from_reader(reader)?;
+        self.round = round;
         self.combatants = combatants;
         Ok(())
     }
 
-    fn save_combatants<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
+    fn save_combat<P: AsRef<Path>>(&self, path: P) -> Result<(), Error> {
         let f = File::create(path)?;
         let writer = BufWriter::new(f);
-        let () = serde_json::to_writer_pretty(writer, &self.combatants)?;
+        let () = serde_json::to_writer_pretty(writer, &(self.round, &self.combatants))?;
         Ok(())
+    }
+
+    /// Autosave game state.
+    fn autosave(&mut self) -> Result<(), Error> {
+        let x = if let Some(ref mut a) = self.autosave {
+            a.get_save_path()
+        } else {
+            // jump out
+            return Ok(())
+        };
+        self.save_combat(x)
     }
 
     fn draw(&mut self) {
@@ -217,11 +287,11 @@ impl<R: Read, W: Write> Battle<R, W> {
             match b {
                 Ctrl('s') => {
                     let p = self.read_line("Save to file: ").unwrap();
-                    self.save_combatants(p).unwrap();
+                    self.save_combat(p).unwrap();
                 },
                 Ctrl('o') => {
                     let p = self.read_line("Open file: ").unwrap();
-                    self.load_combatants(p).unwrap();
+                    self.load_combat(p).unwrap();
                 }
                 Char('\n') => {
                     self.sel = match self.sel {
@@ -244,7 +314,7 @@ impl<R: Read, W: Write> Battle<R, W> {
                 },
                 Char('+') => {
                     let atts = self.read_line("Attacks: ").unwrap().parse::<Meter<u32>>();
-                    atts.map(|a| self.boost_attacks(a)).ok();
+                    atts.map(|a| self.set_attacks(a)).ok();
                 },
                 Char('a') => {
                     // make sure from has enough attacks
@@ -254,7 +324,11 @@ impl<R: Read, W: Write> Battle<R, W> {
                 Char('d') => {
                     let dam = self.read_line("Damage: ").unwrap().parse::<i32>();
                     dam.map(|d| self.damage(d)).ok();
-                }
+                },
+                Char('H') => {
+                    let hp = self.read_line("HP: ").unwrap().parse::<Meter<i32>>();
+                    hp.map(|h| self.set_hp(h)).ok();
+                },
                 Char('h') => {
                     let heal = self.read_line("Healing: ").unwrap().parse::<i32>();
                     heal.map(|h| self.heal(h)).ok();
@@ -271,13 +345,30 @@ impl<R: Read, W: Write> Battle<R, W> {
                     });
                     self.copy_combatant(name);
                 },
+                Char('z') => {
+                    self.get_xp().map(|xp| popup!(xp => self.stdout, self.stdin))
+                        .unwrap();
+                },
+                Char('C') => {
+                    // Reset all combatants.
+                    for comb in &mut self.combatants {
+                        comb.reset();
+                    }
+                },
                 Ctrl('c') => {
                     // terminate signal
                     return
                 },
+                F(1) => {
+                    // display help
+                    popup!(HELP => self.stdout, self.stdin)
+                }
                 _ => {},
             }
 
+            self.autosave().unwrap_or_else(|e| {
+                write!(self.stdout, "{}", e).unwrap();
+            });
             self.draw();
             write!(self.stdout, "{}", cursor::Goto(1, 1)).unwrap();
             self.stdout.flush().unwrap();
@@ -386,7 +477,7 @@ impl<R: Read, W: Write> Battle<R, W> {
         if self.pos < self.combatants.len() {
             let abils = self.read_line("Ability scores (STR/INT/WIS/DEX/CON/CHA): ")
                 .unwrap().parse::<Abilities>().ok();
-            self.combatants[self.pos].abilities(abils);
+            self.combatants[self.pos].abilities = abils;
         }
     }
 
@@ -394,10 +485,10 @@ impl<R: Read, W: Write> Battle<R, W> {
     fn init_combatant(&mut self) {
         if self.pos < self.combatants.len() {
             let team = self.read_char("Team: ").and_then(|c| c.to_digit(10));
-            self.combatants[self.pos].team(team);
+            self.combatants[self.pos].team = team;
             write!(self.stdout, "{}", clear::CurrentLine).unwrap();
             let init = self.read_char("Initiative: ").and_then(|c| c.to_digit(10));
-            self.combatants[self.pos].init(init);
+            self.combatants[self.pos].init = init;
         }
     }
 
@@ -439,9 +530,16 @@ impl<R: Read, W: Write> Battle<R, W> {
     }
 
     /// Change the selected combatant's attacks.
-    fn boost_attacks(&mut self, atts: Meter<u32>) {
+    fn set_attacks(&mut self, atts: Meter<u32>) {
         if let Some(f) = self.sel {
-            self.combatants[f].attacks(atts);
+            self.combatants[f].attacks = atts;
+        }
+    }
+
+    /// Change the selected combatant's hp.
+    fn set_hp(&mut self, hp: Meter<i32>) {
+        if let Some(f) = self.sel {
+            self.combatants[f].hp = hp;
         }
     }
 
@@ -462,6 +560,17 @@ impl<R: Read, W: Write> Battle<R, W> {
         if self.pos > 0 {
             self.pos -= 1;
         }
+    }
+
+    /// Return xp earned by the selected combatant.
+    fn get_xp(&mut self) -> Option<i32> {
+        self.sel.map(|f| {
+            let ref c = self.combatants[f];
+            let n = self.combatants.len() as i32;
+            let team_bonus = self.combatants.iter().filter(|x| x.team == c.team)
+                .fold(0, |acc, ref x| acc + (x.team_xp() / n));
+            c.xp(team_bonus)
+        })
     }
 }
 

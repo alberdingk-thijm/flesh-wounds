@@ -66,6 +66,7 @@ impl<T: Copy + Clone + fmt::Display> fmt::Display for Meter<T> {
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct Incrementer(f64, f64);
 
+#[allow(dead_code)]
 impl Incrementer {
     pub fn new(incr: f64) -> Self {
         Incrementer(0.0, incr)

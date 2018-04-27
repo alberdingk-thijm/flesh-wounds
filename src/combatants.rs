@@ -6,21 +6,28 @@ use std::str::FromStr;
 use std::num::ParseIntError;
 use termion::color;
 
+// macro_rules! set {
+//     ($field:expr, $type:ty) => {
+//         pub fn $field(
+//     }
+// }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Combatant {
     name: String,
     class: Classes,
-    abilities: Option<Abilities>,
-    hp: Meter<i32>,
-    attacks: Meter<u32>,
-    ac: i32,
+    pub abilities: Option<Abilities>,
+    pub hp: Meter<i32>,
+    pub attacks: Meter<u32>,
+    pub ac: i32,
     thac0: u32,
     status: Status,
-    team: Option<u32>,
-    init: Option<u32>,
+    pub team: Option<u32>,
+    pub init: Option<u32>,
     dealt: i32,
     recvd: i32,
     round: u32,
+    xp_bonus: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -230,6 +237,8 @@ pub struct Saves {
 pub struct Abilities {
     #[serde(rename = "str")]
     strength: u32,
+    //#[serde(rename = "str2")]
+    //exceptional_str: Option<u32>,
     #[serde(rename = "int")]
     intelligence: u32,
     #[serde(rename = "wis")]
@@ -296,6 +305,7 @@ impl Default for Combatant {
             dealt: 0,
             recvd: 0,
             round: 0,
+            xp_bonus: false,
         }
     }
 }
@@ -347,27 +357,12 @@ impl Combatant {
             dealt: 0,
             recvd: 0,
             round: 1,
+            xp_bonus: false,
         }
     }
 
     pub fn rename<S: Into<String>>(&mut self, name: S) {
         self.name = name.into();
-    }
-
-    pub fn team(&mut self, team: Option<u32>) {
-        self.team = team;
-    }
-
-    pub fn init(&mut self, init: Option<u32>) {
-        self.init = init;
-    }
-
-    pub fn attacks(&mut self, attacks: Meter<u32>) {
-        self.attacks = attacks;
-    }
-
-    pub fn abilities(&mut self, abilities: Option<Abilities>) {
-        self.abilities = abilities;
     }
 
     pub fn update(&mut self) {
@@ -443,11 +438,23 @@ impl Combatant {
         self.hp += dam;
     }
 
+    /// Reset combatant's damage dealt, damage received and round.
+    pub fn reset(&mut self) {
+        self.dealt = 0;
+        self.recvd = 0;
+        self.round = 1;
+    }
+
     /// Calculate xp earned.
     pub fn xp(&self, team_bonus: i32) -> i32 {
         // FIXME: change false to xp bonus calc
         ((self.dealt * 10 + self.recvd * 20 + team_bonus) as f64 
-            * if false { 1.1 } else { 1.0 }) as i32
+            * if self.xp_bonus { 1.1 } else { 1.0 }) as i32
+    }
+
+    /// Calculate xp earned for damage taken.
+    pub fn team_xp(&self) -> i32 {
+        self.dealt * 20
     }
 
     /// Return a detailed description of the Combatant's features.
