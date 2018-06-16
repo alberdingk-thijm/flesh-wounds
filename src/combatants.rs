@@ -4,30 +4,31 @@ use meters::Meter;
 use std::fmt;
 use std::str::FromStr;
 use std::num::ParseIntError;
-use termion::color;
-
-// macro_rules! set {
-//     ($field:expr, $type:ty) => {
-//         pub fn $field(
-//     }
-// }
+//use termion::color;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Combatant {
-    name: String,
-    class: Classes,
+    pub name: String,
+    pub class: Classes,
     pub abilities: Option<Abilities>,
     pub hp: Meter<i32>,
     pub attacks: Meter<u32>,
     pub ac: i32,
-    thac0: u32,
-    status: Status,
+    pub thac0: u32,
+    pub status: Status,
     pub team: Option<u32>,
     pub init: Option<u32>,
     dealt: i32,
     recvd: i32,
     round: u32,
     xp_bonus: bool,
+}
+
+pub struct CombatantBuilder<'a> {
+    name: Option<&'a str>,
+    class: Option<Classes>,
+    hp: Option<Meter<i32>>,
+    atts: Option<Meter<u32>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -310,31 +311,31 @@ impl Default for Combatant {
     }
 }
 
-impl fmt::Display for Combatant {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let team = self.team.map(|t| format!("{}", t)).unwrap_or("-".into());
-        let init = self.init.map(|t| format!("{}", t)).unwrap_or("-".into());
-        // apply format so that the padding works correctly
-        let col : Option<Box<Fn(String) -> String>> = match self.status {
-            Status::Healthy => None,
-            Status::Stunned(_) => Some(colorize!(color::Yellow)),
-            Status::Dead => Some(colorize!(color::Red)),
-        };
-        let sep = match col {
-            Some(ref c) => c(" │ ".into()),
-            None => " │ ".into(),
-        };
-        color_cells!(f, col = col, sep = &sep,
-                     self.name => "{:16.16}",
-                     team => "{}",
-                     init => "{}",
-                     format!("{}", self.hp) => "{:>9.9}",
-                     self.attacks => "{}",
-                     self.ac => "{:02}",
-                     self.thac0 => "{:02}",
-                     self.status => "{}")
-    }
-}
+// impl fmt::Display for Combatant {
+//     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+//         let team = self.team.map(|t| format!("{}", t)).unwrap_or("-".into());
+//         let init = self.init.map(|t| format!("{}", t)).unwrap_or("-".into());
+//         // apply format so that the padding works correctly
+//         let col : Option<Box<Fn(String) -> String>> = match self.status {
+//             Status::Healthy => None,
+//             Status::Stunned(_) => Some(colorize!(color::Yellow)),
+//             Status::Dead => Some(colorize!(color::Red)),
+//         };
+//         let sep = match col {
+//             Some(ref c) => c(" │ ".into()),
+//             None => " │ ".into(),
+//         };
+//         color_cells!(f, col = col, sep = &sep,
+//                      self.name => "{:16.16}",
+//                      team => "{}",
+//                      init => "{}",
+//                      format!("{}", self.hp) => "{:>9.9}",
+//                      self.attacks => "{}",
+//                      self.ac => "{:02}",
+//                      self.thac0 => "{:02}",
+//                      self.status => "{}")
+//     }
+// }
 
 impl Combatant {
     const LVLD_DEAD : i32 = -10;
