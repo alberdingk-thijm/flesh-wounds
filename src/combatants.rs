@@ -12,23 +12,83 @@ pub struct Combatant {
     pub class: Classes,
     pub abilities: Option<Abilities>,
     pub hp: Meter<i32>,
+    pub hd: u32,
     pub attacks: Meter<u32>,
     pub ac: i32,
     pub thac0: u32,
     pub status: Status,
-    pub team: Option<u32>,
-    pub init: Option<u32>,
+    pub team: u32,
+    pub init: u32,
     dealt: i32,
     recvd: i32,
     round: u32,
     xp_bonus: bool,
 }
 
-pub struct CombatantBuilder<'a> {
-    name: Option<&'a str>,
-    class: Option<Classes>,
-    hp: Option<Meter<i32>>,
-    atts: Option<Meter<u32>>,
+/// A struct for creating a new combatant incrementally.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CombatantBuilder {
+    pub name: String,
+    pub class: Option<Classes>,
+    pub hd: Option<u32>,
+    pub hp: Option<Meter<i32>>,
+    pub attacks: Option<Meter<u32>>,
+    pub ac: Option<i32>,
+    pub team: Option<u32>,
+    pub init: Option<u32>,
+}
+
+macro_rules! build_method {
+    ($field:ident, $type:ty) => {
+        pub fn $field<X: Into<$type>>(mut self, $field: X) -> Self {
+            self.$field = Some($field.into());
+            self
+        }
+    };
+}
+
+impl CombatantBuilder {
+    pub fn new<S: Into<String>>(n: S) -> Self {
+        CombatantBuilder {
+            name: n.into(),
+            class: None,
+            hd: None,
+            hp: None,
+            attacks: None,
+            ac: None,
+            team: None,
+            init: None,
+        }
+    }
+
+    build_method!(class, Classes);
+    build_method!(hd, u32);
+    build_method!(hp, Meter<i32>);
+    build_method!(attacks, Meter<u32>);
+    build_method!(ac, i32);
+    build_method!(team, u32);
+    build_method!(init, u32);
+
+    pub fn build(self) -> Option<Combatant> {
+        let class = self.class?;
+        Some(Combatant {
+            name: self.name,
+            class: class,
+            hd: self.hd?,
+            hp: self.hp?,
+            attacks: self.attacks?,
+            ac: self.ac?,
+            team: self.team?,
+            init: self.init?,
+            status: Status::Healthy,
+            abilities: None,
+            thac0: class.thac0(),
+            dealt: 0,
+            recvd: 0,
+            round: 1,
+            xp_bonus: false,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -290,26 +350,6 @@ impl fmt::Display for Abilities {
     }
 }
 
-impl Default for Combatant {
-    fn default() -> Self {
-        Combatant {
-            name: "?".repeat(16),
-            team: None,
-            init: None,
-            hp: "1/1".parse::<Meter<i32>>().unwrap(),
-            abilities: None,
-            ac: 10,
-            thac0: 20,
-            status: Status::Healthy,
-            attacks: "1/1".parse::<Meter<u32>>().unwrap(),
-            class: Classes::Monster { magical: false, hd: 1 },
-            dealt: 0,
-            recvd: 0,
-            round: 0,
-            xp_bonus: false,
-        }
-    }
-}
 
 // impl fmt::Display for Combatant {
 //     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -337,23 +377,34 @@ impl Default for Combatant {
 //     }
 // }
 
+#[derive(Fail, Debug)]
+pub enum CombatError {
+    #[fail(display = "Not enough attacks left")]
+    NotEnoughAttacks,
+    #[fail(display = "Not in combat")]
+    NotInCombat,
+    #[fail(display = "Target not initialized")]
+    NotBuilt,
+}
+
 impl Combatant {
     const LVLD_DEAD : i32 = -10;
     const UNLVLD_DEAD : i32 = -4;
     /// Modifier specifying total possible range of base init values.
     const INIT_MOD : u32 = 12;
 
-    pub fn new<S: Into<String>>(name: S, hp: Meter<i32>, attacks: Meter<u32>, classes: Classes, ac: i32) -> Self {
+    /*
+    pub fn new<S: Into<String>>(name: S, classes: Classes) -> Self {
         Combatant {
             name: name.into(),
             team: None,
             init: None,
-            hp: hp,
+            hp: None,
             status: Status::Healthy,
             abilities: None,
-            ac: ac,
+            ac: None,
             thac0: classes.thac0(),
-            attacks: attacks,
+            attacks: None,
             class: classes,
             dealt: 0,
             recvd: 0,
@@ -361,6 +412,7 @@ impl Combatant {
             xp_bonus: false,
         }
     }
+    */
 
     pub fn rename<S: Into<String>>(&mut self, name: S) {
         self.name = name.into();
@@ -377,12 +429,12 @@ impl Combatant {
     }
 
     /// Calculate initiative relative to base initiative and current state.
-    pub fn get_init(&self) -> Option<u32> {
-        self.init.map(|i| match self.status {
-            Status::Healthy => i + Combatant::INIT_MOD * 2,
-            Status::Stunned(x) => i + Combatant::INIT_MOD - x,
+    pub fn get_init(&self) -> u32 {
+        match self.status {
+            Status::Healthy => self.init + Combatant::INIT_MOD * 2,
+            Status::Stunned(x) => self.init + Combatant::INIT_MOD - x,
             Status::Dead => 0,
-        })
+        }
     }
 
     fn dead(&self) -> i32 {
@@ -393,14 +445,16 @@ impl Combatant {
     }
 
     /// Return true if considered "in combat".
-    /// Equivalent to having a team and initiative set.
+    /// Equivalent to having HP, attacks, a team and initiative set.
     pub fn in_combat(&self) -> bool {
-        self.init.is_some() && self.team.is_some()
+        true
+        //self.hp.is_some() && self.attacks.is_some() && self.init.is_some() && self.team.is_some()
     }
 
     /// Return true if able to attack.
     /// Must have attacks to spend.
     pub fn can_attack(&self) -> bool {
+        //self.attacks.map(|a| a.curr() >= 1).unwrap_or(false)
         self.attacks.curr() >= 1
     }
 
@@ -448,7 +502,6 @@ impl Combatant {
 
     /// Calculate xp earned.
     pub fn xp(&self, team_bonus: i32) -> i32 {
-        // FIXME: change false to xp bonus calc
         ((self.dealt * 10 + self.recvd * 20 + team_bonus) as f64 
             * if self.xp_bonus { 1.1 } else { 1.0 }) as i32
     }
@@ -461,7 +514,7 @@ impl Combatant {
     /// Return a detailed description of the Combatant's features.
     pub fn describe(&self) -> String {
         format!("{}, {}\n\r{}", self.name, self.class,
-                self.abilities.map(|a| format!("{}", a)).unwrap_or("".into()))
+                self.abilities.map(|a| a.to_string()).unwrap_or("".into()))
     }
 }
 

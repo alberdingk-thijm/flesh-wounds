@@ -26,7 +26,7 @@ mod meters;
 mod combatants;
 
 use meters::Meter;
-use combatants::{Combatant, Classes, Abilities};
+use combatants::{Combatant, CombatantBuilder, Classes, Abilities, CombatError};
 
 /// Enum for handling thread-sent events.
 #[derive(Debug, PartialEq)]
@@ -82,10 +82,13 @@ const _HELP : &'static str = "
     ctrl-s      save\r
     ctrl-o      open\r
     n           new combatant\r
-    i           set combatant team and initiative\r
-    e           set combatant ability scores\r
-    +           set combatant attacks\r
+    I           set combatant initiative\r
+    T           set combatant team
+    E           set combatant ability scores\r
+    A           set combatant attacks\r
+    C           set combatant class\r
     H           set combatant HP\r
+    D           set combatant HD\r
     a           attack self->other\r
     d           damage self\r
     h           heal self\r
@@ -95,16 +98,33 @@ const _HELP : &'static str = "
     Return      select combatant\r
     j           scroll down\r
     k           scroll up\r
+    ~           reset combatants to round 1\r
 
     Press Enter to close this help and return to the program.\r
 ";
 
-#[derive(Fail, Debug)]
-enum CombatError {
-    #[fail(display = "Not enough attacks left")]
-    NotEnoughAttacks,
-    #[fail(display = "Not in combat")]
-    NotInCombat,
+/// Specifies whether or not a row of the battle struct
+/// contains a complete combatant or one in progress.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BattleRow {
+    Done(Combatant),  // filter map to Some(Combatant)
+    Building(CombatantBuilder),  // filter map to None
+}
+
+impl BattleRow {
+    pub fn done(&self) -> Option<&Combatant> {
+        match self {
+            BattleRow::Done(c) => Some(c),
+            BattleRow::Building(_) => None,
+        }
+    }
+
+    pub fn done_mut(&mut self) -> Option<&mut Combatant> {
+        match self {
+            BattleRow::Done(c) => Some(c),
+            BattleRow::Building(_) => None
+        }
+    }
 }
 
 const MAX_COMBATANTS : usize = 32;
@@ -116,7 +136,7 @@ struct Battle {
     requests: Vec<MsgType>,
     messages: BTreeMap<MsgType, String>,
     sel: Option<usize>,
-    combatants: Vec<Combatant>,
+    combatants: Vec<BattleRow>,
     round: u32,
     pos: usize,
     autosave: Option<AutosaveSettings>,
@@ -148,6 +168,20 @@ impl Default for AutosaveSettings {
 //     NoInput,
 // }
 
+/// Set the field of a row.
+macro_rules! set_row {
+    ($field:ident: $type:ty) => {
+        fn $field(&mut self, $field: $type) {
+            if self.pos < self.combatants.len() {
+                match self.combatants[self.pos] {
+                    BattleRow::Building(ref mut cb) => cb.$field = Some($field),
+                    BattleRow::Done(ref mut c) => c.$field = $field,
+                }
+            }
+        }
+    }
+}
+
 impl Battle {
     fn new() -> Self {
         Battle {
@@ -168,7 +202,7 @@ impl Battle {
     fn load_combat<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Error> {
         let f = File::open(path)?;
         let reader = BufReader::new(f);
-        let (round, combatants) : (u32, Vec<Combatant>) = serde_json::from_reader(reader)?;
+        let (round, combatants) : (u32, Vec<BattleRow>) = serde_json::from_reader(reader)?;
         self.round = round;
         self.combatants = combatants;
         Ok(())
@@ -288,9 +322,8 @@ impl Battle {
                 match evt {
                     Event::Input(input) => match input {
                         Ctrl('s') => {
-                            let save = get_or_req!(MsgType::SaveFileName,
-                                |p| p);
-                            self.save_combat(save)?;
+                            get_or_req!(MsgType::SaveFileName,
+                                |save| self.save_combat(save))?;
                         },
                         Ctrl('o') => {
                             let open = get_or_req!(MsgType::OpenFileName,
@@ -301,30 +334,23 @@ impl Battle {
                         Char('k') => self.up(),
                         Char('x') => self.advance(),
                         Char('n') => {
-                            self.requests = vec![MsgType::AC, MsgType::Class, MsgType::HD, MsgType::Attacks, MsgType::HP, MsgType::Name];
                             let name = get_or_req!(MsgType::Name,
                                 |p: &String| p.clone());
-                            let hp = get_or_req!(MsgType::HP,
-                                |p: &String| p.parse::<Meter<i32>>())?;
-                            let atts = get_or_req!(MsgType::Attacks,
-                                |p: &String| p.parse::<Meter<u32>>())?;
-                            // TODO: add HD as distinct from class/level
-                            let _ = get_or_req!(MsgType::HD,
-                                |p: &String| p.parse::<u32>())?;
-                            let class = get_or_req!(MsgType::Class,
+                            let _class = get_or_req!(MsgType::Class,
                                 |p: &String| p.parse::<Classes>())?;
-                            let ac = get_or_req!(MsgType::AC,
+                            let _ac = get_or_req!(MsgType::AC,
                                 |p: &String| p.parse::<i32>())?;
-                            self.add_combatant(name, hp, atts, class, ac)?;
+                            self.add_combatant(name);
                         },
                         Char('i') => {
                             let team = get_or_req!(MsgType::Team,
-                                |p: &String| p.parse::<u32>()).ok();
+                                |p: &String| p.parse::<u32>())?;
+                            self.team(team);
                             let init = get_or_req!(MsgType::Init,
-                                |p: &String| p.parse::<u32>()).ok();
-                            self.init_combatant(team, init);
+                                |p: &String| p.parse::<u32>())?;
+                            self.init(init);
                         },
-                        Char('e') => {
+                        Char('E') => {
                             let abils = get_or_req!(MsgType::Abilities,
                                 |p: &String| p.parse::<Abilities>()).ok();
                             self.add_abilities(abils);
@@ -335,10 +361,10 @@ impl Battle {
                                 _ => Some(self.pos),
                             };
                         },
-                        Char('+') => {
+                        Char('A') => {
                             let atts = get_or_req!(MsgType::Attacks,
                                 |p: &String| p.parse::<Meter<u32>>())?;
-                            self.set_attacks(atts);
+                            self.attacks(atts);
                         },
                         Char('a') => {
                             // make sure from has enough attacks
@@ -346,20 +372,30 @@ impl Battle {
                                 |p: &String| p.parse::<i32>())?;
                             self.attack(dam)?;
                         },
+                        Char('C') => {
+                            let class = get_or_req!(MsgType::Class,
+                                |p: &String| p.parse::<Classes>())?;
+                            self.class(class);
+                        },
+                        Char('D') => {
+                            let hd = get_or_req!(MsgType::HD,
+                                |p: &String| p.parse::<u32>())?;
+                            self.hd(hd);
+                        },
                         Char('d') => {
                             let dam = get_or_req!(MsgType::Damage,
                                 |p: &String| p.parse::<i32>())?;
-                            self.damage(dam);
+                            self.damage(dam)?;
                         },
                         Char('H') => {
                             let hp = get_or_req!(MsgType::HP,
                                 |p: &String| p.parse::<Meter<i32>>())?;
-                            self.set_hp(hp);
+                            self.hp(hp);
                         },
                         Char('h') => {
                             let heal = get_or_req!(MsgType::Healing,
                                 |p: &String| p.parse::<i32>())?;
-                            self.heal(heal);
+                            self.heal(heal)?;
                         },
                         Char('y') => {
                             let s = get_or_req!(MsgType::Name,
@@ -374,10 +410,12 @@ impl Battle {
                         Char('z') => {
                             self.get_xp().unwrap();
                         },
-                        Char('C') => {
+                        Char('~') => {
                             // Reset all combatants.
                             for comb in &mut self.combatants {
-                                comb.reset();
+                                if let BattleRow::Done(c) = comb {
+                                    c.reset();
+                                }
                             }
                         },
                         F(1) => {
@@ -398,18 +436,21 @@ impl Battle {
     fn advance(&mut self) {
         self.round += 1;
         self.sort();
-        for c in &mut self.combatants {
-            c.update();
+        for comb in &mut self.combatants {
+            if let BattleRow::Done(c) = comb {
+                c.update();
+            }
         }
     }
 
     /// Sort the combatants' ordering based on initiative and status.
     /// Remove any combatants with Status::Dead from the table.
     fn sort(&mut self) {
-        // produce iterator of combatants
         let mut initiatives = self.combatants.clone().into_iter()
-            // calculate init
-            .map(|c| (c.get_init(), c))
+            .map(|row| (match row {
+                 BattleRow::Done(ref c) => Some(c.get_init()),
+                 BattleRow::Building(_) => None,
+            }, row))
             // filter out dead, but keep uninitialized
             .filter(|&(i, _)| match i { Some(n) => n > 0, None => true })
             .collect::<Vec<_>>();
@@ -423,42 +464,51 @@ impl Battle {
     }
 
     /// Add a combatant to the battle.
-    fn add_combatant(&mut self, name: String, hp: Meter<i32>, atts: Meter<u32>, class: Classes, ac: i32) -> Result<(), Error> {
-        let c = Combatant::new(name, hp, atts, class, ac);
-        self.combatants.push(c);
+    fn add_combatant(&mut self, name: String) {
+        let c = CombatantBuilder::new(name);
+        self.combatants.push(BattleRow::Building(c));
         self.sort();
-        Ok(())
     }
 
     fn add_abilities(&mut self, abils: Option<Abilities>) {
         if self.pos < self.combatants.len() {
-            self.combatants[self.pos].abilities = abils;
+            if let BattleRow::Done(ref mut c) = self.combatants[self.pos] {
+                c.abilities = abils;
+            }
         }
     }
 
-    /// Initialize the combatant underneath the cursor.
-    fn init_combatant(&mut self, team: Option<u32>, init: Option<u32>) {
-        if self.pos < self.combatants.len() {
-            self.combatants[self.pos].team = team;
-            self.combatants[self.pos].init = init;
-        }
-    }
+    set_row!(class: Classes);
+    set_row!(hd: u32);
+    set_row!(hp: Meter<i32>);
+    set_row!(attacks: Meter<u32>);
+    set_row!(ac: i32);
+    set_row!(init: u32);
+    set_row!(team: u32);
 
     /// Duplicate the combatant underneath the cursor, renaming if given a new name.
     fn copy_combatant<S: Into<String>>(&mut self, name: Option<S>) {
         if let Some(f) = self.sel {
-            let mut c = self.combatants[f].clone();
+            let mut new = self.combatants[f].clone();
             if let Some(name) = name {
-                c.rename(name);
+                match new {
+                    BattleRow::Done(ref mut c) => c.rename(name),
+                    BattleRow::Building(ref mut cb) => cb.name = name.into(),
+                }
             }
-            self.combatants.push(c);
+            self.combatants.push(new);
         }
     }
 
     /// Add damage to selected.
-    fn damage(&mut self, dam: i32) {
+    fn damage(&mut self, dam: i32) -> Result<(), CombatError> {
         if let Some(f) = self.sel {
-            self.combatants[f].recv_hit(dam);
+            match self.combatants[f] {
+                BattleRow::Done(ref mut c) => Ok(c.recv_hit(dam)),
+                BattleRow::Building(_) => Err(CombatError::NotBuilt),
+            }
+        } else {
+            Ok(())
         }
     }
 
@@ -466,15 +516,29 @@ impl Battle {
     fn attack(&mut self, dam: i32) -> Result<(), CombatError> {
         let t = self.pos;
         if let Some(f) = self.sel {
-            if self.combatants[f].in_combat() {
-                if self.combatants[f].can_attack() {
-                    self.combatants[f].deal_hit(dam);
-                    self.combatants[t].recv_hit(dam);
+            if self.combatants[f].done().is_none() || self.combatants[f].done().is_none() {
+                return Err(CombatError::NotBuilt);
+            }
+            // We have to borrow self.combatants 2 times, so we need separate scopes:
+            // - once to check that `from` can act and update it mutably
+            // - once to update `to` mutably
+            {
+                // we know from the earlier if statement that `from` is a combatant
+                let mut from = self.combatants[f].done_mut().unwrap();
+                if from.in_combat() {
+                    if from.can_attack() {
+                        from.deal_hit(dam);
+                    } else {
+                        return Err(CombatError::NotEnoughAttacks);
+                    }
                 } else {
-                    return Err(CombatError::NotEnoughAttacks);
+                    return Err(CombatError::NotInCombat);
                 }
-            } else {
-                return Err(CombatError::NotInCombat);
+            }
+            {
+                // as with `from` above
+                let mut to = self.combatants[t].done_mut().unwrap();
+                to.recv_hit(dam);
             }
         }
         Ok(())
@@ -483,21 +547,32 @@ impl Battle {
     /// Change the selected combatant's attacks.
     fn set_attacks(&mut self, atts: Meter<u32>) {
         if let Some(f) = self.sel {
-            self.combatants[f].attacks = atts;
+            match self.combatants[f] {
+                BattleRow::Done(ref mut c) => c.attacks = atts,
+                BattleRow::Building(ref mut cb) => cb.attacks = Some(atts),
+            }
         }
     }
 
     /// Change the selected combatant's hp.
     fn set_hp(&mut self, hp: Meter<i32>) {
         if let Some(f) = self.sel {
-            self.combatants[f].hp = hp;
+            match self.combatants[f] {
+                BattleRow::Done(ref mut c) => c.hp = hp,
+                BattleRow::Building(ref mut cb) => cb.hp = Some(hp),
+            }
         }
     }
 
     /// Heal the selected combatant.
-    fn heal(&mut self, dam: i32) {
+    fn heal(&mut self, dam: i32) -> Result<(), CombatError> {
         if let Some(f) = self.sel {
-            self.combatants[f].heal(dam);
+            match self.combatants[f] {
+                BattleRow::Done(ref mut c) => Ok(c.heal(dam)),
+                BattleRow::Building(_) => Err(CombatError::NotBuilt),
+            }
+        } else {
+            Ok(())
         }
     }
 
@@ -515,12 +590,20 @@ impl Battle {
 
     /// Return xp earned by the selected combatant.
     fn get_xp(&mut self) -> Option<i32> {
-        self.sel.map(|f| {
-            let ref c = self.combatants[f];
+        self.sel.and_then(|f| {
+            let ref comb = match self.combatants[f] {
+                BattleRow::Done(ref c) => Some(c),
+                BattleRow::Building(_) => None,
+            }?;
             let n = self.combatants.len() as i32;
-            let team_bonus = self.combatants.iter().filter(|x| x.team == c.team)
+            let team_bonus = self.combatants.iter()
+                .filter_map(|comb| match comb {
+                    BattleRow::Done(c) => Some(c),
+                    BattleRow::Building(_) => None,
+                })
+                .filter(|x| x.team == comb.team)
                 .fold(0, |acc, ref x| acc + (x.team_xp() / n));
-            c.xp(team_bonus)
+            Some(comb.xp(team_bonus))
         })
     }
 }
@@ -536,19 +619,46 @@ fn draw(t: &mut Terminal<RawBackend>, b: &Battle) -> Result<(), Error> {
     let mut rows = vec![];
     for comb in &b.combatants {
         let row_data = vec![
-            comb.name.clone(),
-            match comb.team {
-                Some(t) => t.to_string(),
-                None => String::from(""),
+            match comb {
+                BattleRow::Done(c) => c.name.clone(),
+                BattleRow::Building(cb) => cb.name.clone(),
             },
-            match comb.init {
-                Some(t) => t.to_string(),
-                None => String::from(""),
+            match comb {
+                BattleRow::Done(c) => c.team.to_string(),
+                BattleRow::Building(cb) => match cb.team {
+                    Some(t) => t.to_string(),
+                    None => String::from(""),
+                },
             },
-            comb.hp.to_string(),
-            comb.attacks.to_string(),
-            comb.thac0.to_string(),
-            comb.status.to_string()
+            match comb {
+                BattleRow::Done(c) => c.init.to_string(),
+                BattleRow::Building(cb) => match cb.init {
+                    Some(t) => t.to_string(),
+                    None => String::from(""),
+                },
+            },
+            match comb {
+                BattleRow::Done(c) => c.hp.to_string(),
+                BattleRow::Building(cb) => match cb.hp {
+                    Some(t) => t.to_string(),
+                    None => String::from(""),
+                },
+            },
+            match comb {
+                BattleRow::Done(c) => c.attacks.to_string(),
+                BattleRow::Building(cb) => match cb.attacks {
+                    Some(t) => t.to_string(),
+                    None => String::from(""),
+                },
+            },
+            match comb {
+                BattleRow::Done(c) => c.thac0.to_string(),
+                BattleRow::Building(_) => String::from(""),
+            },
+            match comb {
+                BattleRow::Done(c) => c.status.to_string(),
+                BattleRow::Building(_) => String::from(""),
+            },
         ];
         rows.push(Row::StyledData(row_data.into_iter(), &row_style));
     }
