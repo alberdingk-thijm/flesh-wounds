@@ -117,17 +117,17 @@ impl From<ParseIntError> for ParseClassError {
 
 impl fmt::Display for Classes {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", match self {
+        match self {
             &Classes::Multi { name: ref v, lvl: l} => {
                 let names = v.iter().map(|&c| format!("{}", c))
                 .collect::<Vec<_>>().join("/");
-                format!("{} level {}", l, names)
+                write!(f, "{} level {}", l, names)
             },
-            &Classes::Single { name: c, lvl: l } => format!("{} level {}", l, c),
+            &Classes::Single { name: c, lvl: l } => write!(f, "{} level {}", l, c),
             &Classes::Monster { magical: m, hd: h } => {
-                format!("{}{}-HD monster", if m { "magical " } else { "" }, h)
+                write!(f, "{}{}-HD monster", if m { "magical " } else { "" }, h)
             },
-        })
+        }
     }
 }
 
