@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Tim Alberdingk Thijm <tim.thijm@gmail.com>"]
 
 [dependencies]
+tui = "0.2.3"
 termion = "1.5"
 serde = "1.0"
 serde_derive = "1.0"
